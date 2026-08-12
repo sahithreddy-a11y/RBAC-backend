@@ -152,8 +152,8 @@ The implementation was also tested against additional edge cases beyond the basi
 - Task 7 — Session and offline grace handling: approximately 1 hour
 - Task 8 — Seat management and idempotency: approximately 1 hour 30 minutes
 - Task 9 — Authentication error mapping: approximately 1 hour
-- Task 10 — Authorization pipeline: approximately 1 hour
-- Task 11 — Installer integrity and version checks: approximately 1 hour
+- Task 11 — Authorization pipeline: approximately 1 hour
+- Task Addition — Installer integrity and version checks: approximately 1 hour
 - Testing, debugging, edge-case handling, and review: approximately 1 hour 30 minutes
 
 ---

@@ -85,3 +85,126 @@ For example, if an organization's license is revoked because of a security or pa
 The audit builder is the central point where audit records are created. If each caller were responsible for removing sensitive information, one developer could easily forget to sanitize a password, token, or authorization header.
 
 Redacting inside the builder creates a single security boundary. Every caller receives the same protection, including callers added later who may not know all of the audit logging security requirements.
+
+
+
+### Task 6 — JWT verification
+
+JWT verification is performed before trusting token claims. The verifier accepts only RS256 tokens, requires a known `kid`, validates the selected RSA signing key, verifies the signature, and checks the required `exp`, `iss`, and `aud` claims.
+
+The `token_use` claim is also validated so that a token intended for another purpose cannot be accepted. Expired, not-yet-valid, malformed, incorrectly signed, wrong-issuer, wrong-audience, unknown-key, and unsupported-algorithm tokens fail safely without exposing cryptographic exceptions to callers.
+
+### Task 7 — Session and offline grace handling
+
+Session validation distinguishes between valid access tokens, expired access tokens, refresh-token age, and offline operation.
+
+A valid access token can continue to work while offline. An expired access token can only continue during the defined seven-day offline grace period. After that period, reconnection is required.
+
+Refresh tokens older than 30 days require login again. A future online-check timestamp is rejected rather than being trusted. Missing or invalid session timestamps fail safely, and naive datetimes are treated as UTC while timezone-aware datetimes are normalized to UTC.
+
+### Task 8 — Seat management and idempotency
+
+Seat management ensures that invitations cannot exceed the organization's available seat count.
+
+Pending invitations reserve seats, activation converts a pending member into an active member without consuming an additional seat, and cancellation releases the reserved seat. Deactivation of an active member releases exactly one seat.
+
+Duplicate invitations and repeated activation/deactivation operations are handled idempotently so that the same operation cannot accidentally consume or release multiple seats. Invalid emails, corrupted state, zero-seat organizations, and unknown members are rejected safely without unintended state changes.
+
+### Task 9 — Authentication error mapping
+
+Authentication-provider errors are converted into safe application-level responses rather than exposing provider-specific exception details to users.
+
+Credential-related failures use safe, non-enumerating messages so that user existence is not revealed. Retryable errors provide retry/wait behavior where appropriate, while disabled accounts direct the user to contact an administrator.
+
+Unknown and malformed error inputs fail safely using a generic fallback. Provider exception names and stack-trace information are never exposed in user-facing messages.
+
+### Task 10 — Authorization pipeline
+
+The authorization pipeline performs the security checks in the required order: token verification, claims parsing, license evaluation, and module resolution.
+
+A failed verification or claims parsing step stops the pipeline immediately. An invalid license prevents module authorization, while a valid license allows the requested modules to be resolved against the license.
+
+A single normalized UTC time is passed through the pipeline so that all time-based decisions use the same clock value. Invalid top-level inputs and invalid time values fail safely, and denied authorization results do not expose granted modules.
+
+### Task 11 — Installer integrity and version checks
+
+Installer integrity is verified using SHA-256. Files are processed incrementally in chunks so large installers do not need to be loaded entirely into memory.
+
+The expected digest is validated before comparison, and `hmac.compare_digest` is used for the digest comparison. Missing, unreadable, or invalid inputs fail closed.
+
+Version checks use numeric `MAJOR.MINOR.PATCH` comparison rather than string comparison, so versions such as `0.1.9` and `0.1.10` are ordered correctly. Malformed versions, negative values, leading-zero components, and incorrect version formats are rejected.
+
+---
+
+## 2. Incomplete Work
+
+All coding tasks covered today and their acceptance tests are implemented.
+
+No known required functionality from Tasks 6–11 remains incomplete.
+
+The implementation was also tested against additional edge cases beyond the basic acceptance scenarios.
+
+---
+
+## 3. Approximate Time
+
+- Task 6 — JWT verification: approximately 1 hour
+- Task 7 — Session and offline grace handling: approximately 1 hour
+- Task 8 — Seat management and idempotency: approximately 1 hour 30 minutes
+- Task 9 — Authentication error mapping: approximately 1 hour
+- Task 10 — Authorization pipeline: approximately 1 hour
+- Task 11 — Installer integrity and version checks: approximately 1 hour
+- Testing, debugging, edge-case handling, and review: approximately 1 hour 30 minutes
+
+---
+
+## 4. Tools Used
+
+- Python
+- pytest
+- Git
+- PowerShell
+- Visual Studio Code
+- AI assistant (ChatGPT) for implementation guidance, test design, debugging, and explanation
+
+I reviewed and tested the implementation rather than relying only on generated code. The final test suite passes all implemented tests.
+
+---
+
+## 5. Reasoning Questions
+
+### 1. In Task 6, why must JWT claims not be trusted before signature verification?
+
+JWT claims come from the token and can be modified by an attacker. Signature verification establishes that the claims were issued by a trusted signer and have not been tampered with.
+
+Without verification, an attacker could modify security-sensitive claims such as the user, organization, role, or token purpose and potentially gain unauthorized access.
+
+### 2. In Task 7, why is an offline grace period necessary?
+
+The application may need to continue operating temporarily when the client cannot contact the authorization service. The offline grace period provides controlled continuity without allowing an offline session to remain valid indefinitely.
+
+Once the grace period expires, the client must reconnect so that the session can be checked again.
+
+### 3. In Task 8, why must seat operations be idempotent?
+
+Operations such as invitation, activation, and deactivation may be retried because of network failures, duplicate requests, or repeated user actions.
+
+Without idempotency, the same operation could consume multiple seats or release more seats than were actually allocated. Idempotency ensures repeated operations leave the organization in the same valid state.
+
+### 4. In Task 9, why should authentication errors not expose provider-specific details?
+
+Detailed authentication errors can reveal information about the authentication system or whether a particular account exists. They can also expose internal exception names or implementation details.
+
+Mapping provider errors to controlled application-level responses gives the user useful guidance while reducing information leakage.
+
+### 5. In Task 10, why must authorization checks happen in a specific order?
+
+Authorization depends on trusted information. The token must first be verified before its claims can be trusted. Those claims are then used to evaluate the license and finally determine which requested modules can be granted.
+
+Allowing later authorization decisions to run on unverified or invalid data could create a security bypass.
+
+### 6. In Task 11, why use SHA-256 and numeric version comparison?
+
+SHA-256 provides a deterministic digest that can be compared with a trusted installer digest to detect file modification or corruption.
+
+Version numbers must be compared by their numeric components rather than as strings. For example, string comparison can incorrectly treat `0.1.10` as lower than `0.1.9`, while numeric component comparison produces the correct ordering.

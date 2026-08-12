@@ -56,7 +56,12 @@ def parse_claims(payload: dict) -> Claims:
 
     sub = payload.get("sub")
 
-    if not isinstance(sub, str) or not sub.strip():
+    if not isinstance(sub, str):
+        raise ValueError("Missing required claim: sub")
+
+    sub = sub.strip()
+
+    if not sub:
         raise ValueError("Missing required claim: sub")
 
     return Claims(

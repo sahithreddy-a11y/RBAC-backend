@@ -144,3 +144,13 @@ def test_claims_are_immutable():
 
     with pytest.raises(AttributeError):
         claims.role = "admin"
+
+
+def test_sub_whitespace_is_stripped():
+    payload = {
+        "sub": "  user-123  ",
+    }
+
+    claims = parse_claims(payload)
+
+    assert claims.sub == "user-123"

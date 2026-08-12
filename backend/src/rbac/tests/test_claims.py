@@ -103,6 +103,33 @@ def test_missing_sub_raises_error():
         parse_claims(payload)
 
 
+def test_modules_invalid_integer_defaults_to_empty_list():
+    payload = {
+        "sub": "x",
+        "modules": 5,
+    }
+
+    claims = parse_claims(payload)
+
+    assert claims.modules == []
+
+
+def test_modules_invalid_dict_defaults_to_empty_list():
+    payload = {
+        "sub": "x",
+        "modules": {"a": 1},
+    }
+
+    claims = parse_claims(payload)
+
+    assert claims.modules == []
+
+
+def test_non_dict_payload_raises_error():
+    with pytest.raises(ValueError, match="Invalid claims payload"):
+        parse_claims("not-a-dict")
+
+
 def test_claims_are_immutable():
     claims = Claims(
         sub="user-123",

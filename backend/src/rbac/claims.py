@@ -40,6 +40,9 @@ def _parse_modules(value) -> list[str]:
     if isinstance(value, str):
         value = value.split(",")
 
+    if not isinstance(value, (list, tuple)):
+        return []
+
     return [
         item.strip()
         for item in value
@@ -48,6 +51,9 @@ def _parse_modules(value) -> list[str]:
 
 
 def parse_claims(payload: dict) -> Claims:
+    if not isinstance(payload, dict):
+        raise ValueError("Invalid claims payload")
+
     sub = payload.get("sub")
 
     if not isinstance(sub, str) or not sub.strip():

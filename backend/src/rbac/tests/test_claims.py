@@ -154,3 +154,36 @@ def test_sub_whitespace_is_stripped():
     claims = parse_claims(payload)
 
     assert claims.sub == "user-123"
+
+
+def test_non_string_email_becomes_none():
+    payload = {
+        "sub": "user-123",
+        "email": 123,
+    }
+
+    claims = parse_claims(payload)
+
+    assert claims.email is None
+
+
+def test_non_string_org_id_becomes_none():
+    payload = {
+        "sub": "user-123",
+        "org_id": {},
+    }
+
+    claims = parse_claims(payload)
+
+    assert claims.org_id is None
+
+
+def test_non_string_license_id_becomes_none():
+    payload = {
+        "sub": "user-123",
+        "license_id": [],
+    }
+
+    claims = parse_claims(payload)
+
+    assert claims.license_id is None

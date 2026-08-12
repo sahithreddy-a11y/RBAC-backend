@@ -27,10 +27,10 @@ def _optional_string(value) -> str | None:
         return None
 
     if isinstance(value, str):
-        value = value.strip()
-        return value or None
+       value = value.strip()
+       return value or None
 
-    return value
+    return None
 
 
 def _parse_modules(value) -> list[str]:

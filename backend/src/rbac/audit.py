@@ -1,7 +1,6 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-
 EVENT_TYPES = frozenset({
     "LOGIN",
     "LOGOUT",
@@ -14,7 +13,6 @@ EVENT_TYPES = frozenset({
     "TOKEN_REFRESH_FAILED",
 })
 
-
 SENSITIVE_KEYS = frozenset({
     "password",
     "passwd",
@@ -22,6 +20,7 @@ SENSITIVE_KEYS = frozenset({
     "token",
     "access_token",
     "refresh_token",
+    "id_token",
     "authorization",
     "api_key",
     "apikey",

@@ -97,6 +97,16 @@ def test_sensitive_keys_are_case_insensitive():
     assert event["metadata"]["PassWord"] == "[REDACTED]"
 
 
+def test_id_token_is_redacted():
+    event = build_audit_event(
+        "LOGIN",
+        user_id="user-123",
+        metadata={"id_token": "eyJhbGciOiJIUzI1NiJ9.secret-token"},
+    )
+
+    assert event["metadata"]["id_token"] == "[REDACTED]"
+
+
 def test_nested_authorization_is_redacted():
     event = build_audit_event(
         "LOGIN",

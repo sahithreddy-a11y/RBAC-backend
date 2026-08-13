@@ -451,6 +451,16 @@ edit local files.
 
 ---
 
+## Tools Used Today
+
+- ChatGPT — AI coding and review assistance
+- VS Code — Code editing
+- PowerShell — Development terminal
+- Python — Runtime checks and validation
+- Pytest — Automated testing
+- Git — Version control
+- GitHub — Remote repository and submission
+
 # Task 16 — Self-review
 
 The detailed self-review is documented separately in `SELF_REVIEW.md`.

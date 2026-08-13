@@ -1,97 +1,120 @@
 # Self Review
 
-## 1. Task 12 — JWKS cache failure behaviour
+## Defect 1 — Seat email case sensitivity
 
 ### Where
-`backend/src/rbac/jwks_cache.py`
+`backend/src/rbac/seats.py` — email validation/member lookup
 
 ### What breaks
-When the JWKS fetcher fails after the cached data becomes stale, the cache must follow
-the explicitly chosen stale-cache policy. A stale key can remain trusted longer than
-intended if stale data is served without a bound.
+Email addresses are treated as case-sensitive.
+
+Concrete example:
+
+`invite("Bob@X.com")`
+followed by
+`invite("bob@x.com")`
+
+can treat the same person as two different members and consume two seats.
 
 ### How bad
-Security impact: an old signing key may continue to be trusted after the identity
-provider has stopped publishing it.
+High severity. This can cause incorrect seat accounting and can deny a legitimate
+user access because the organisation may incorrectly appear to have fewer seats
+available.
 
 ### Fixed or not
-The behaviour is documented in `NOTES.md` and is bounded according to the chosen
-availability/security policy.
+Not fixed in this submission.
+
+The correct fix is to normalize email addresses consistently, for example by
+stripping whitespace and lowercasing before member lookup and storage.
 
 ---
 
-## 2. Task 13 — Concurrent seat allocation
+## Defect 2 — resolve_user_modules does not fail closed for None inputs
 
 ### Where
-`backend/src/rbac/seat_store.py`
+`backend/src/rbac/modules.py` — `resolve_user_modules()`
 
 ### What breaks
-Two callers can read the same seat-store version. Only the first caller should be
-allowed to commit that version. If the second caller were allowed to commit using the
-stale version, both operations could consume the same remaining seat.
+Calling:
+
+`resolve_user_modules(None, None)`
+
+raises `TypeError` instead of failing closed.
+
+The expected defensive behaviour for malformed or missing input is to return no
+granted modules rather than allowing an exception to escape.
 
 ### How bad
-High severity: this could oversell an organisation's licensed seats and corrupt the
-seat count.
+Medium severity. A malformed authorization input can cause an unexpected
+exception instead of a controlled authorization denial.
 
 ### Fixed or not
-Fixed using optimistic concurrency control. A commit succeeds only when the supplied
-expected version still matches the stored version. A stale caller receives
-`version_conflict` and must re-read before retrying.
+Not fixed in this submission.
+
+This should be changed so missing or malformed inputs produce an empty module set
+and, where appropriate, a warning rather than an exception.
 
 ---
 
-## 3. Task 14 — Token claims and licence state
+## Defect 3 — Dependencies are not declared for a clean checkout
 
 ### Where
-`backend/src/rbac/token_claims.py`
+Project root — `requirements.txt`
 
 ### What breaks
-A token must not retain previously granted modules when the organisation's licence
-has expired or been revoked. If the stored user module list were copied directly into
-the token, a user could retain access after the licence became invalid.
+The implementation uses external dependencies such as PyJWT and cryptography,
+but a clean checkout does not have those dependencies declared in
+`requirements.txt`.
+
+A new developer or CI environment installing the project from scratch can
+therefore fail before the RBAC tests can run.
 
 ### How bad
-High severity: an expired or revoked licence could still grant access to protected
-modules.
+Medium severity. It can prevent the application and test suite from being
+installed or executed in a clean environment.
 
 ### Fixed or not
-Fixed by evaluating the licence at token creation time and resolving modules through
-the existing `resolve_user_modules()` logic. Expired or revoked licences produce an
-empty module set.
+Not fixed in this submission.
+
+The dependencies should be declared with appropriate minimum or pinned versions
+in `requirements.txt`.
 
 ---
 
-## Task 4 — Offline cache rollback limitation
+## Defect 4 — Offline cache cannot fully prevent rollback
 
 ### Where
 `backend/src/rbac/offline_cache.py`
 
 ### What breaks
-A previously valid cache can be copied back after a licence has expired. Its HMAC is
-still valid because it was genuinely issued and signed by the trusted issuer.
+A user can save a genuinely valid sealed cache, allow the licence to expire, and
+then restore the older sealed cache.
+
+The HMAC still verifies because the old cache was genuinely signed.
 
 ### How bad
-Security limitation: local rollback can potentially restore an older valid licence
-state.
+Security limitation. An older valid licence state can potentially be restored
+on a machine whose owner can modify local files.
 
 ### Fixed or not
-Not fully fixable with local file state alone. A machine owner who can modify files
-can restore an older valid cache. Preventing this completely requires trusted external
-state or hardware-backed monotonic storage.
+Not fully fixable with local file state alone.
 
-The implementation does reject modified data, invalid signatures, malformed caches,
-and future-dated caches. It therefore provides integrity protection but not complete
-anti-rollback protection.
+The implementation detects modification, invalid signatures, malformed data, and
+future-dated caches. It cannot determine that a previously valid signed cache has
+since been superseded.
+
+Preventing this completely would require trusted external state or
+hardware-backed monotonic state.
 
 ---
 
 ## Least Confident About
 
-I am least confident about the boundaries between locally enforceable security and
-security that requires trusted external state. The offline cache can reliably detect
-tampering because the HMAC protects the serialized data, but it cannot prove that an
-older genuinely signed cache has been superseded. Similarly, cache and licence
-decisions depend on the correctness of the injected time value. These limitations are
-documented rather than hidden, and the implementation fails closed for malformed or
-invalidly signed data.
+I am least confident about the security boundary around locally stored licence
+state. HMAC gives strong integrity protection against modification by someone who
+does not know the signing secret, but it cannot provide complete anti-rollback
+protection when the machine owner controls the filesystem. I have therefore
+treated the offline cache as an integrity mechanism rather than claiming it solves
+local licence enforcement completely. I am also least confident about legacy
+interfaces from the previous day's modules where malformed inputs may still raise
+exceptions instead of consistently failing closed.

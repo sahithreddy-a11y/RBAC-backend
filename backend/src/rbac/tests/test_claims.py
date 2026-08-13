@@ -13,6 +13,7 @@ def test_parse_claims_with_all_fields():
         "license_id": "lic-789",
         "license_type": "enterprise",
         "license_expires": "2026-12-31",
+        "license_status": "active",
     }
 
     claims = parse_claims(payload)
@@ -25,6 +26,7 @@ def test_parse_claims_with_all_fields():
     assert claims.license_id == "lic-789"
     assert claims.license_type == "enterprise"
     assert claims.license_expires == "2026-12-31"
+    assert claims.license_status == "active"
 
 
 def test_modules_can_be_a_list():
@@ -81,6 +83,49 @@ def test_optional_claims_default_to_none():
     assert claims.license_id is None
     assert claims.license_type is None
     assert claims.license_expires is None
+
+
+def test_license_status_defaults_to_active():
+    payload = {
+        "sub": "user-123",
+    }
+
+    claims = parse_claims(payload)
+
+    assert claims.license_status == "active"
+
+
+def test_license_status_is_parsed():
+    payload = {
+        "sub": "user-123",
+        "license_status": "revoked",
+    }
+
+    claims = parse_claims(payload)
+
+    assert claims.license_status == "revoked"
+
+
+def test_license_status_whitespace_is_stripped():
+    payload = {
+        "sub": "user-123",
+        "license_status": " suspended ",
+    }
+
+    claims = parse_claims(payload)
+
+    assert claims.license_status == "suspended"
+
+
+def test_empty_license_status_defaults_to_active():
+    payload = {
+        "sub": "user-123",
+        "license_status": "",
+    }
+
+    claims = parse_claims(payload)
+
+    assert claims.license_status == "active"
 
 
 def test_empty_email_becomes_none():
@@ -140,6 +185,7 @@ def test_claims_are_immutable():
         license_id=None,
         license_type=None,
         license_expires=None,
+        license_status="active",
     )
 
     with pytest.raises(AttributeError):
@@ -187,3 +233,25 @@ def test_non_string_license_id_becomes_none():
     claims = parse_claims(payload)
 
     assert claims.license_id is None
+
+
+
+def test_license_status_is_parsed():
+    payload = {
+        "sub": "user-123",
+        "license_status": "revoked",
+    }
+
+    claims = parse_claims(payload)
+
+    assert claims.license_status == "revoked"
+
+
+def test_missing_license_status_defaults_to_active():
+    payload = {
+        "sub": "user-123",
+    }
+
+    claims = parse_claims(payload)
+
+    assert claims.license_status == "active"

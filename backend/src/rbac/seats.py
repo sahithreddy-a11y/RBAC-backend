@@ -56,7 +56,7 @@ def _validate_email(email: str) -> str:
     if not isinstance(email, str):
         raise ValueError("email must be a string")
 
-    normalized = email.strip()
+    normalized = email.strip().lower()
 
     if not normalized:
         raise ValueError("email must not be empty")

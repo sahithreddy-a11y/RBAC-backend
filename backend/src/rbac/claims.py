@@ -20,6 +20,7 @@ class Claims:
     license_id: str | None
     license_type: str | None
     license_expires: str | None
+    license_status: str
 
 
 def _optional_string(value) -> str | None:
@@ -27,8 +28,8 @@ def _optional_string(value) -> str | None:
         return None
 
     if isinstance(value, str):
-       value = value.strip()
-       return value or None
+        value = value.strip()
+        return value or None
 
     return None
 
@@ -73,4 +74,7 @@ def parse_claims(payload: dict) -> Claims:
         license_id=_optional_string(payload.get("license_id")),
         license_type=_optional_string(payload.get("license_type")),
         license_expires=_optional_string(payload.get("license_expires")),
+        license_status=_optional_string(
+            payload.get("license_status")
+        ) or "active",
     )

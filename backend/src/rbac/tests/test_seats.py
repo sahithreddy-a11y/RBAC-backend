@@ -142,6 +142,35 @@ def test_duplicate_invite_consumes_only_one_seat():
     assert_invariants(second.state)
 
 
+def test_email_case_variants_are_treated_as_same_member():
+    state = make_state(5)
+
+    first = invite(
+        state,
+        "Bob@X.com",
+    )
+
+    second = invite(
+        first.state,
+        "bob@x.com",
+    )
+
+    assert first.ok is True
+    assert first.state.seats_used == 1
+    assert first.state.members == {
+        "bob@x.com": "pending",
+    }
+
+    assert second.ok is False
+    assert second.reason == "already_member"
+    assert second.state.seats_used == 1
+    assert second.state.members == {
+        "bob@x.com": "pending",
+    }
+
+    assert_invariants(second.state)
+
+
 def test_duplicate_invite_for_active_member_is_also_idempotent():
     state = make_state(5)
 

@@ -85,6 +85,7 @@ def authorize_launch(
     Determine what an authenticated user may do at application launch.
 
     Pipeline:
+
         1. Verify JWT.
         2. Parse verified claims.
         3. Evaluate license.
@@ -94,7 +95,7 @@ def authorize_launch(
     """
 
     # ---------------------------------------------------------
-    # Validate inputs that belong to this composition layer.
+    # INPUT VALIDATION
     # ---------------------------------------------------------
 
     if not isinstance(token, str) or not token.strip():
@@ -112,8 +113,8 @@ def authorize_launch(
     if not isinstance(license_modules, list):
         return _denied("modules:invalid_license_modules")
 
-    # Defensive copy: callers cannot mutate the list used by this
-    # authorization operation after entering the function.
+    # Defensive copy so the caller cannot mutate the list during
+    # this authorization operation.
     requested_license_modules = list(license_modules)
 
     try:
@@ -122,9 +123,9 @@ def authorize_launch(
         return _denied("authorization:invalid_now")
 
     # ---------------------------------------------------------
-    # STEP 1 — VERIFY
+    # STEP 1 — VERIFY JWT
     #
-    # Do not parse or trust claims before this succeeds.
+    # Claims must not be parsed or trusted before verification.
     # ---------------------------------------------------------
 
     verified = verify_token(
@@ -153,18 +154,27 @@ def authorize_launch(
     role = claims.role
 
     # ---------------------------------------------------------
-    # STEP 3 — LICENSE
+    # STEP 3 — LICENSE EVALUATION
     #
-    # The existing Claims model exposes license_expires but does
-    # not expose a separate license status. Therefore this
-    # composition layer evaluates the supplied license as active,
-    # allowing evaluate_license() to enforce expiry/perpetual
-    # behavior.
+    # license_status is part of the real Claims model.
+    #
+    # getattr(..., "active") is intentionally used here because
+    # some authorization tests use lightweight mock Claims
+    # objects that predate the license_status field.
+    #
+    # Real parsed claims always provide license_status because
+    # parse_claims() defaults a missing status to "active".
     # ---------------------------------------------------------
+
+    license_status_claim = getattr(
+        claims,
+        "license_status",
+        "active",
+    )
 
     try:
         license_status = evaluate_license(
-            "active",
+            license_status_claim,
             claims.license_expires,
             operation_now,
         )
@@ -199,8 +209,12 @@ def authorize_launch(
     # STEP 4 — MODULE RESOLUTION
     #
     # claims.modules comes from the verified JWT.
-    # resolve_user_modules() handles unknown modules,
-    # unlicensed modules, duplicates and cross_compare dependency.
+    #
+    # resolve_user_modules() handles:
+    #   - unknown modules
+    #   - unlicensed modules
+    #   - duplicates
+    #   - cross_compare dependency
     # ---------------------------------------------------------
 
     try:

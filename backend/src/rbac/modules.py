@@ -23,8 +23,8 @@ class ModuleResolution:
 
 
 def resolve_user_modules(
-    license_modules: list[str],
-    requested_modules: list[str],
+    license_modules: list[str] | None,
+    requested_modules: list[str] | None,
 ) -> ModuleResolution:
     """
     Resolve which requested modules a user is allowed to receive.
@@ -37,6 +37,9 @@ def resolve_user_modules(
     4. Duplicate module requests are collapsed.
     5. Granted modules are returned in sorted order.
     """
+
+    license_modules = license_modules or []
+    requested_modules = requested_modules or []
 
     granted: set[str] = set()
     rejected: dict[str, str] = {}

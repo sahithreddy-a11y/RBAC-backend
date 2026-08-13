@@ -30,8 +30,6 @@ Sensitive metadata is redacted inside the audit-event builder rather than relyin
 
 All five coding tasks and their acceptance tests are implemented.
 
-No known required functionality from Tasks 1–5 remains incomplete.
-
 The assignment does not define a Task 6 or require a database-backed audit log. The current Task 5 implementation builds the audit event record as required.
 
 ---
@@ -140,8 +138,6 @@ Version checks use numeric `MAJOR.MINOR.PATCH` comparison rather than string com
 
 All coding tasks covered today and their acceptance tests are implemented.
 
-No known required functionality from Tasks 6–11 remains incomplete.
-
 The implementation was also tested against additional edge cases beyond the basic acceptance scenarios.
 
 ---
@@ -208,3 +204,293 @@ Allowing later authorization decisions to run on unverified or invalid data coul
 SHA-256 provides a deterministic digest that can be compared with a trusted installer digest to detect file modification or corruption.
 
 Version numbers must be compared by their numeric components rather than as strings. For example, string comparison can incorrectly treat `0.1.10` as lower than `0.1.9`, while numeric component comparison produces the correct ordering.
+
+
+
+# RBAC Backend — Day 3 Notes
+
+## Submission Completeness / Known Gaps
+
+I am not claiming that all acceptance criteria across Tasks 6–15 are complete.
+
+I reviewed the implementation and understand that passing tests alone do not
+prove that every acceptance criterion in the task specification has been met.
+
+For any requirement that I cannot point to in the implementation and verify
+through a relevant test or other evidence, I am treating it as unverified or
+incomplete rather than claiming it is complete.
+
+In particular:
+
+- Tasks 6–11 have not been marked as fully complete merely because their
+  existing tests pass.
+- Any acceptance criterion that is not reachable through the public function
+  or API signature that was shipped is considered an interface/specification
+  gap, not silently treated as complete.
+- I am reporting known limitations instead of using a blanket statement that
+  nothing remains incomplete.
+- Task 15 was optional and was completed, with its rollback limitation
+  documented below.
+- Task 16 is completed through `SELF_REVIEW.md`.
+
+---
+
+# Task Time Log
+
+The times below are approximate working times, including implementation,
+debugging, testing, and review. They are estimates rather than stopwatch-level
+measurements.
+
+| Task | Description | Time Consumed |
+|---|---|---:|
+| Task 12 | JWKS cache, TTL, key rotation and unknown-kid rate limiting | ~1 hr 15 min |
+| Task 13 | Seat store, optimistic concurrency and idempotency | ~1 hr 45 min |
+| Task 14 | Token claims and licence-based entitlement calculation | ~1 hr |
+| Task 15 | Offline licence cache (optional) | ~30 min |
+| Task 16 | Self-review and documentation | ~30 min |
+| **Total** | | **~5 hrs** |
+
+
+---
+
+# Task 13 Questions
+
+## 1. Why isn't idempotency alone enough to prevent overselling seats?
+
+Idempotency and optimistic concurrency solve different problems.
+
+Idempotency prevents the same logical request from being applied more than once.
+It does not prevent two different requests from both reading the same old
+state.
+
+For example, suppose an organisation has 10 seats and 9 are already used.
+
+1. Request A reads version 7 and sees 9 seats used.
+2. Request B also reads version 7 and sees 9 seats used.
+3. A commits an invite using expected_version=7. It succeeds and changes the
+   state to version 8 with 10 seats used.
+4. B is a different request with a different request ID and still has
+   expected_version=7.
+5. Without the optimistic version check, B could also commit using the stale
+   state and the count could become 11.
+
+Idempotency cannot prevent this because A and B have different request IDs.
+
+The version check prevents the corruption: B's expected version is 7 but the
+current version is 8, so B receives `version_conflict` and does not change the
+state.
+
+---
+
+## 2. When would returning version_conflict instead of duplicate_request cause real damage?
+
+Consider a request that succeeds but whose response is lost.
+
+1. The client sends request ID `r1` with expected_version=7.
+2. The operation succeeds and the store changes to version 8.
+3. The response is lost because of a network failure.
+4. The client retries the exact same request ID `r1`, still using expected
+   version 7.
+5. If the store checks the version before checking completed request IDs, it
+   returns `version_conflict`.
+6. The client may interpret that as meaning the operation did not complete,
+   re-read the state, and submit another operation.
+
+That can cause duplicate side effects.
+
+The correct result for an already completed request is `duplicate_request`,
+returning the original committed result without applying the operation again.
+
+`version_conflict` means a new request has an outdated expected version.
+
+`duplicate_request` means that exact logical request has already completed.
+
+The current implementation checks the completed request table before checking
+the version, so these cases remain distinct.
+
+---
+
+# Task 12 Questions
+
+## 3. When the fetch fails and the cache is stale, do you serve stale or fail closed?
+
+I chose to fail closed.
+
+When the JWKS cache is stale and the fetch fails, the implementation returns:
+
+`CacheResult(jwks=None, source="unavailable", reason="fetch_failed")`
+
+It does not continue trusting the stale JWKS.
+
+I chose this because authentication should not continue trusting expired key
+material indefinitely when the current key set cannot be retrieved.
+
+I would reconsider this if the product requirement placed a stronger priority on
+availability during an identity-provider outage. Even then, I would prefer a
+strict maximum stale period rather than allowing stale key material
+indefinitely.
+
+---
+
+## 4. What does an attacker still get to do with unknown-kid requests, and why is that acceptable?
+
+An attacker can still send many tokens containing arbitrary unknown `kid`
+values.
+
+Those requests still reach the token-verification path and the application
+must inspect them. After the configured minimum interval has passed, an
+unknown-kid request can trigger another JWKS fetch.
+
+However, the attacker cannot cause an outbound JWKS fetch for every unknown
+`kid`. The implementation records the last unknown-kid refresh attempt and
+returns `unknown_kid_refetch_rate_limited` while the five-minute interval has
+not elapsed.
+
+This is acceptable because an unknown `kid` can also represent legitimate key
+rotation. The rate limit preserves the ability to discover a newly rotated key
+while preventing an attacker from turning every token verification into an
+outbound fetch.
+
+---
+
+# Task 14 Question
+
+## 5. Why does the Pre-Token Lambda compute entitlements at sign-in instead of reading a stored list?
+
+The token claims builder computes module entitlements from the current licence
+and the user's requested modules at token issuance time.
+
+It evaluates the current licence using the supplied `now` value and calls
+`resolve_user_modules()` only when the licence is valid.
+
+This means the token reflects the licence state at the time it is issued. If a
+licence is revoked at 2pm on a Tuesday, a token issued after 2pm will not
+receive the revoked modules; the `modules` claim becomes empty because the
+licence is invalid.
+
+Computing entitlements at token issuance therefore prevents a previously
+stored entitlement list from continuing to grant modules after the licence
+has been revoked or otherwise become invalid.
+
+---
+
+# Day 2 Re-answers
+
+## RS256 / HS256 confusion attack
+
+The attack is possible when a verifier accepts both RS256 and HS256 and
+incorrectly uses an RSA public key as the HMAC secret.
+
+The RSA public key is public, so an attacker could obtain it and create an
+HS256 token using that public key as the HMAC secret. If the verifier accepts
+that token, the attacker could potentially forge authentication claims.
+
+The defence is algorithm pinning: the verifier accepts only RS256 and verifies
+the signature using the trusted RSA public key.
+
+---
+
+## User enumeration through different login errors
+
+An authentication endpoint can reveal whether an account exists if it gives
+different responses for an unknown email and a known email with an incorrect
+password.
+
+For example:
+
+1. The attacker submits `alice@example.com` with a wrong password.
+2. The attacker submits `doesnotexist@example.com` with a wrong password.
+3. If the responses differ, the attacker learns that Alice's account exists.
+4. Repeating this over a large list can enumerate valid accounts.
+
+The defence is to return the same externally visible authentication failure for
+both cases, rather than revealing whether the account exists.
+
+---
+
+## SENSITIVE_KEYS
+
+Sensitive fields should be identified using the intended key names rather than
+broad substring matching.
+
+Broad substring matching can create false positives. For example, an unrelated
+field whose name merely contains a sensitive-looking word could be treated as
+secret data even when it is not.
+
+An explicit set of sensitive keys makes sanitization predictable and avoids
+accidentally treating unrelated fields as secrets.
+
+---
+
+# Task 15 — Optional Offline Licence Cache
+
+Task 15 was optional, but it was completed.
+
+The offline cache uses HMAC-SHA256 to protect the sealed licence payload, and
+signature comparison uses constant-time comparison so edits to the sealed
+cache can be detected.
+
+The cache also uses time information to reject clearly invalid cache data.
+
+However, local HMAC cannot completely prevent rollback on a machine whose owner
+can modify local files.
+
+A user can save an older, genuinely signed cache and restore it after the
+licence has expired. The signature remains valid because the older cache really
+was issued and signed by the trusted issuer.
+
+Therefore Task 15 detects tampering with the signed contents but does not prove
+that a valid cache is the newest cache.
+
+Complete rollback prevention would require trusted external state or another
+trusted monotonic mechanism outside ordinary user-editable local storage.
+
+This limitation is intentional and follows the task specification's warning
+that local rollback cannot be completely solved when the machine owner can
+edit local files.
+
+---
+
+# Task 16 — Self-review
+
+The detailed self-review is documented separately in `SELF_REVIEW.md`.
+
+The self-review identifies concrete defects rather than style issues.
+
+The defects identified include:
+
+1. Non-canonical persisted member email keys can cause duplicate logical users
+   to consume multiple seats.
+2. Non-finite `exp` values such as infinity can cause JWT verification to raise
+   `OverflowError` instead of returning `malformed`.
+3. Non-finite `nbf` values can cause the same type of failure.
+
+These are treated as actual correctness defects because they produce incorrect
+behaviour for concrete inputs rather than merely being style concerns.
+
+The self-review records the location, concrete failure, impact, and whether each
+defect is fixed.
+
+---
+
+# Review Discipline
+
+I will not use a blanket statement such as "nothing remains incomplete" unless
+I have checked the individual acceptance criteria.
+
+For every future task, I will review the specification itself and ask:
+
+1. Where in the code is this requirement implemented?
+2. Which test demonstrates it?
+3. Can the requirement actually be reached through the public function/API
+   signature?
+4. What happens for invalid, repeated, concurrent, and boundary inputs?
+5. Are there any assumptions that do not hold?
+6. If a requirement is not implemented, not testable, or impossible through the
+   shipped interface, have I explicitly reported it?
+
+Passing tests are evidence for the behaviour they cover. They are not by
+themselves evidence that every acceptance criterion is complete.
+
+If I find an incomplete or unverified requirement, I will report it explicitly
+instead of silently treating the task as complete.

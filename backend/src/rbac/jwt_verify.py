@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 
 import jwt
 from jwt import (
@@ -9,6 +10,9 @@ from jwt import (
     InvalidSignatureError,
     InvalidTokenError,
 )
+
+
+CLOCK_SKEW_SECONDS = 60
 
 
 @dataclass(frozen=True)
@@ -33,24 +37,26 @@ def verify_token(
     issuer: str,
     audience: str,
     token_use: str = "id",
+    now: datetime | None = None,
 ) -> VerifiedToken:
     """Verify a JWT using an in-memory JWKS.
 
-    The token must:
-    - be a non-empty string
-    - use RS256
-    - contain a known kid
-    - use an RSA signing key
-    - have a valid signature
-    - contain a valid exp claim
-    - not be before nbf, when nbf is present
-    - contain the expected issuer
-    - contain the expected audience
-    - contain the expected token_use
+    Time-based claims use a 60-second clock-skew tolerance.
 
-    Invalid or untrusted input is returned as a VerifiedToken with
-    valid=False rather than being allowed to escape as an exception.
+    ``now`` is injectable so callers and tests can control the reference
+    time used for exp and nbf validation.
     """
+
+    if now is None:
+        now = datetime.now(timezone.utc)
+
+    if not isinstance(now, datetime):
+        return _invalid("malformed")
+
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+
+    now = now.astimezone(timezone.utc)
 
     # ---------------------------------------------------------
     # Basic input validation
@@ -86,8 +92,6 @@ def verify_token(
     algorithm = header.get("alg")
     kid = header.get("kid")
 
-    # The algorithm is NOT negotiated with the token.
-    # RS256 is the only algorithm this verifier accepts.
     if algorithm != "RS256":
         return _invalid("unsupported_algorithm")
 
@@ -117,7 +121,7 @@ def verify_token(
         return _invalid("unknown_kid")
 
     # ---------------------------------------------------------
-    # Validate the selected JWK before using it
+    # Validate the selected JWK
     # ---------------------------------------------------------
 
     if matching_key.get("kty") != "RSA":
@@ -137,7 +141,10 @@ def verify_token(
         return _invalid("malformed")
 
     # ---------------------------------------------------------
-    # Cryptographic verification + registered claim validation
+    # Cryptographic verification + issuer/audience validation
+    #
+    # exp and nbf are disabled here because PyJWT uses its own
+    # internal clock. We validate them below using ``now``.
     # ---------------------------------------------------------
 
     try:
@@ -153,14 +160,10 @@ def verify_token(
                     "iss",
                     "aud",
                 ],
+                "verify_exp": False,
+                "verify_nbf": False,
             },
         )
-
-    except ExpiredSignatureError:
-        return _invalid("expired")
-
-    except ImmatureSignatureError:
-        return _invalid("not_yet_valid")
 
     except InvalidIssuerError:
         return _invalid("wrong_issuer")
@@ -178,15 +181,49 @@ def verify_token(
         return _invalid("malformed")
 
     # ---------------------------------------------------------
+    # Validate exp using injectable now
+    # ---------------------------------------------------------
+
+    exp = claims.get("exp")
+
+    if isinstance(exp, bool) or not isinstance(exp, (int, float)):
+        return _invalid("malformed")
+
+    expiration_time = datetime.fromtimestamp(
+        exp,
+        tz=timezone.utc,
+    )
+
+    # Exactly 60 seconds of clock skew is accepted.
+    if now > expiration_time + timedelta(seconds=CLOCK_SKEW_SECONDS):
+        return _invalid("expired")
+
+    # ---------------------------------------------------------
+    # Validate nbf using injectable now
+    # ---------------------------------------------------------
+
+    nbf = claims.get("nbf")
+
+    if nbf is not None:
+        if isinstance(nbf, bool) or not isinstance(nbf, (int, float)):
+            return _invalid("malformed")
+
+        not_before_time = datetime.fromtimestamp(
+            nbf,
+            tz=timezone.utc,
+        )
+
+        # A token is rejected only when it is more than 60 seconds
+        # ahead of the verifier's clock.
+        if now < not_before_time - timedelta(seconds=CLOCK_SKEW_SECONDS):
+            return _invalid("not_yet_valid")
+
+    # ---------------------------------------------------------
     # Application-specific token_use claim
     # ---------------------------------------------------------
 
     if claims.get("token_use") != token_use:
         return _invalid("wrong_token_use")
-
-    # ---------------------------------------------------------
-    # Everything passed
-    # ---------------------------------------------------------
 
     return VerifiedToken(
         valid=True,

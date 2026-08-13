@@ -123,9 +123,11 @@ def test_bad_signature_is_rejected():
 def test_expired_token_is_rejected():
     private_key, public_key = generate_key_pair()
 
+    now = datetime.now(timezone.utc)
+
     token = create_token(
         private_key,
-        expires_delta=timedelta(seconds=-1),
+        expires_delta=timedelta(seconds=-90),
     )
 
     jwks = {
@@ -139,6 +141,108 @@ def test_expired_token_is_rejected():
         jwks,
         issuer=ISSUER,
         audience=AUDIENCE,
+        now=now,
+    )
+
+    assert result.valid is False
+    assert result.claims is None
+    assert result.reason == "expired"
+
+
+def test_token_expired_by_30_seconds_is_still_valid_with_clock_skew():
+    private_key, public_key = generate_key_pair()
+
+    now = datetime.now(timezone.utc)
+
+    token = create_token(
+        private_key,
+        expires_delta=timedelta(seconds=-30),
+    )
+
+    jwks = {
+        "keys": [
+            public_jwk(public_key),
+        ]
+    }
+
+    result = verify_token(
+        token,
+        jwks,
+        issuer=ISSUER,
+        audience=AUDIENCE,
+        now=now,
+    )
+
+    assert result.valid is True
+    assert result.reason == "ok"
+    assert result.claims is not None
+
+
+def test_token_expired_by_exactly_60_seconds_is_still_valid():
+    # Boundary decision:
+    # exactly 60 seconds of clock skew is accepted.
+    private_key, public_key = generate_key_pair()
+
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+
+    token_exp = now - timedelta(seconds=60)
+
+    payload = {
+        "sub": "user-123",
+        "iss": ISSUER,
+        "aud": AUDIENCE,
+        "exp": token_exp,
+        "token_use": TOKEN_USE,
+    }
+
+    token = jwt.encode(
+        payload,
+        private_key,
+        algorithm="RS256",
+        headers={"kid": "test-key"},
+    )
+
+    jwks = {
+        "keys": [
+            public_jwk(public_key),
+        ]
+    }
+
+    result = verify_token(
+        token,
+        jwks,
+        issuer=ISSUER,
+        audience=AUDIENCE,
+        now=now,
+    )
+
+    assert result.valid is True
+    assert result.reason == "ok"
+    assert result.claims is not None
+
+
+def test_token_expired_by_90_seconds_is_rejected():
+    private_key, public_key = generate_key_pair()
+
+    now = datetime.now(timezone.utc)
+
+    token = create_token(
+        private_key,
+        expires_delta=timedelta(seconds=-90),
+    )
+
+    jwks = {
+        "keys": [
+            public_jwk(public_key),
+        ]
+    }
+
+    result = verify_token(
+        token,
+        jwks,
+        issuer=ISSUER,
+        audience=AUDIENCE,
+        now=now,
     )
 
     assert result.valid is False
@@ -149,7 +253,8 @@ def test_expired_token_is_rejected():
 def test_not_yet_valid_token_is_rejected():
     private_key, public_key = generate_key_pair()
 
-    future_time = datetime.now(timezone.utc) + timedelta(minutes=10)
+    now = datetime.now(timezone.utc)
+    future_time = now + timedelta(minutes=10)
 
     token = create_token(
         private_key,
@@ -167,6 +272,7 @@ def test_not_yet_valid_token_is_rejected():
         jwks,
         issuer=ISSUER,
         audience=AUDIENCE,
+        now=now,
     )
 
     assert result.valid is False

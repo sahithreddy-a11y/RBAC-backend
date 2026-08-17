@@ -166,11 +166,7 @@ def authorize_launch(
     # parse_claims() defaults a missing status to "active".
     # ---------------------------------------------------------
 
-    license_status_claim = getattr(
-        claims,
-        "license_status",
-        "active",
-    )
+    license_status_claim = claims.license_status
 
     try:
         license_status = evaluate_license(

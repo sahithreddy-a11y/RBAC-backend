@@ -55,6 +55,7 @@ def test_successful_launch_returns_authorization_result(monkeypatch):
             role = "researcher"
             modules = ["fcs"]
             license_expires = None
+            license_status = "active"
 
         return Claims()
 
@@ -240,6 +241,7 @@ def test_invalid_license_short_circuits_modules(monkeypatch):
         role = "researcher"
         modules = ["fcs"]
         license_expires = "2020-01-01"
+        license_status = "active"
 
     class License:
         valid = False
@@ -312,6 +314,7 @@ def test_license_warning_is_returned(monkeypatch):
         role = "researcher"
         modules = ["fcs"]
         license_expires = "2026-08-20"
+        license_status = "active"
 
     class License:
         valid = True
@@ -362,8 +365,8 @@ def test_module_resolution_trims_unlicensed_modules(monkeypatch):
         email = "researcher@example.com"
         role = "researcher"
         modules = ["fcs", "nta"]
-
         license_expires = None
+        license_status = "active"
 
     class License:
         valid = True
@@ -426,6 +429,7 @@ def test_one_normalized_clock_is_passed_to_license(monkeypatch):
         role = "researcher"
         modules = ["fcs"]
         license_expires = None
+        license_status = "active"
 
     class License:
         valid = True
@@ -484,6 +488,7 @@ def test_naive_datetime_is_treated_as_utc(monkeypatch):
         role = "researcher"
         modules = ["fcs"]
         license_expires = None
+        license_status = "active"
 
     class License:
         valid = True
@@ -594,6 +599,7 @@ def test_result_is_immutable(monkeypatch):
         role = "researcher"
         modules = ["fcs"]
         license_expires = None
+        license_status = "active"
 
     class License:
         valid = True

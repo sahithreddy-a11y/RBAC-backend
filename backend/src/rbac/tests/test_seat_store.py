@@ -28,6 +28,25 @@ def test_read_returns_initial_state():
     assert store.read() == initial
 
 
+def test_read_returns_defensive_copy():
+    store = SeatStore(
+        make_versioned_state(
+            members={"alice@example.com": "active"},
+        )
+    )
+
+    snapshot = store.read()
+
+    snapshot.state.members["bob@example.com"] = "active"
+
+    current = store.read()
+
+    assert current.state.members == {
+        "alice@example.com": "active"
+    }
+    assert current.state.seats_used == 1
+
+
 def test_successful_commit_increments_version_by_one():
     store = SeatStore(make_versioned_state())
 

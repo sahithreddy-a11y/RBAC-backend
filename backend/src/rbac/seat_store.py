@@ -53,7 +53,18 @@ class SeatStore:
         ] = OrderedDict()
 
     def read(self) -> VersionedSeatState:
-        return self._state
+        state = self._state.state
+
+        copied_state = SeatState(
+            seats_total=state.seats_total,
+            seats_used=state.seats_used,
+            members=dict(state.members),
+        )
+
+        return VersionedSeatState(
+            state=copied_state,
+            version=self._state.version,
+        )
 
     def commit(
         self,

@@ -189,10 +189,13 @@ def verify_token(
     if isinstance(exp, bool) or not isinstance(exp, (int, float)):
         return _invalid("malformed")
 
-    expiration_time = datetime.fromtimestamp(
-        exp,
-        tz=timezone.utc,
-    )
+    try:
+       expiration_time = datetime.fromtimestamp(
+          exp,
+          tz=timezone.utc,
+        )
+    except (OverflowError, ValueError):
+        return _invalid("malformed")
 
     # Exactly 60 seconds of clock skew is accepted.
     if now > expiration_time + timedelta(seconds=CLOCK_SKEW_SECONDS):
@@ -208,10 +211,13 @@ def verify_token(
         if isinstance(nbf, bool) or not isinstance(nbf, (int, float)):
             return _invalid("malformed")
 
-        not_before_time = datetime.fromtimestamp(
-            nbf,
-            tz=timezone.utc,
-        )
+        try:
+            not_before_time = datetime.fromtimestamp(
+               nbf,
+               tz=timezone.utc,
+            )
+        except (OverflowError, ValueError):
+            return _invalid("malformed")
 
         # A token is rejected only when it is more than 60 seconds
         # ahead of the verifier's clock.

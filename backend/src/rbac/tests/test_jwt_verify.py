@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import math
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -566,6 +567,193 @@ def test_missing_audience_is_rejected():
         private_key,
         algorithm="RS256",
         headers={"kid": "test-key"},
+    )
+
+    jwks = {
+        "keys": [
+            public_jwk(public_key),
+        ]
+    }
+
+    result = verify_token(
+        token,
+        jwks,
+        issuer=ISSUER,
+        audience=AUDIENCE,
+    )
+
+    assert result.valid is False
+    assert result.claims is None
+    assert result.reason == "malformed"
+
+
+
+def test_exp_positive_infinity_is_rejected():
+    private_key, public_key = generate_key_pair()
+
+    payload = {
+        "sub": "user-123",
+        "iss": ISSUER,
+        "aud": AUDIENCE,
+        "exp": math.inf,
+        "token_use": TOKEN_USE,
+    }
+
+    token = jwt.encode(
+        payload,
+        private_key,
+        algorithm="RS256",
+        headers={"kid": "test-key"},
+    )
+
+    jwks = {
+        "keys": [
+            public_jwk(public_key),
+        ]
+    }
+
+    result = verify_token(
+        token,
+        jwks,
+        issuer=ISSUER,
+        audience=AUDIENCE,
+    )
+
+    assert result.valid is False
+    assert result.claims is None
+    assert result.reason == "malformed"
+
+
+def test_exp_negative_infinity_is_rejected():
+    private_key, public_key = generate_key_pair()
+
+    payload = {
+        "sub": "user-123",
+        "iss": ISSUER,
+        "aud": AUDIENCE,
+        "exp": -math.inf,
+        "token_use": TOKEN_USE,
+    }
+
+    token = jwt.encode(
+        payload,
+        private_key,
+        algorithm="RS256",
+        headers={"kid": "test-key"},
+    )
+
+    jwks = {
+        "keys": [
+            public_jwk(public_key),
+        ]
+    }
+
+    result = verify_token(
+        token,
+        jwks,
+        issuer=ISSUER,
+        audience=AUDIENCE,
+    )
+
+    assert result.valid is False
+    assert result.claims is None
+    assert result.reason == "malformed"
+
+
+def test_exp_nan_is_rejected():
+    private_key, public_key = generate_key_pair()
+
+    payload = {
+        "sub": "user-123",
+        "iss": ISSUER,
+        "aud": AUDIENCE,
+        "exp": math.nan,
+        "token_use": TOKEN_USE,
+    }
+
+    token = jwt.encode(
+        payload,
+        private_key,
+        algorithm="RS256",
+        headers={"kid": "test-key"},
+    )
+
+    jwks = {
+        "keys": [
+            public_jwk(public_key),
+        ]
+    }
+
+    result = verify_token(
+        token,
+        jwks,
+        issuer=ISSUER,
+        audience=AUDIENCE,
+    )
+
+    assert result.valid is False
+    assert result.claims is None
+    assert result.reason == "malformed"
+
+
+def test_nbf_positive_infinity_is_rejected():
+    private_key, public_key = generate_key_pair()
+
+    token = create_token(
+        private_key,
+        not_before=math.inf,
+    )
+
+    jwks = {
+        "keys": [
+            public_jwk(public_key),
+        ]
+    }
+
+    result = verify_token(
+        token,
+        jwks,
+        issuer=ISSUER,
+        audience=AUDIENCE,
+    )
+
+    assert result.valid is False
+    assert result.claims is None
+    assert result.reason == "malformed"
+
+
+def test_nbf_negative_infinity_is_rejected():
+    private_key, public_key = generate_key_pair()
+
+    token = create_token(
+        private_key,
+        not_before=-math.inf,
+    )
+
+    jwks = {
+        "keys": [
+            public_jwk(public_key),
+        ]
+    }
+
+    result = verify_token(
+        token,
+        jwks,
+        issuer=ISSUER,
+        audience=AUDIENCE,
+    )
+
+    assert result.valid is False
+    assert result.claims is None
+    assert result.reason == "malformed"
+
+
+def test_nbf_nan_is_rejected():
+    private_key, public_key = generate_key_pair()
+
+    token = create_token(
+        private_key,
+        not_before=math.nan,
     )
 
     jwks = {

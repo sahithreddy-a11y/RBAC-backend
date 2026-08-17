@@ -160,7 +160,9 @@ def build_token_claims(
     license_id = _string_or_empty(
         license_data.get("license_id", license_data.get("id"))
     )
-    license_type = _string_or_empty(license_data.get("license_type", license_data.get("type")))
+    license_type = _string_or_empty(
+        license_data.get("license_type", license_data.get("type"))
+    )
     license_expires = _string_or_empty(
         license_data.get("license_expires", license_data.get("expires"))
     )
@@ -216,7 +218,8 @@ def build_token_claims(
     }
 
     # External token contract: every emitted claim MUST be a string.
-    assert all(isinstance(value, str) for value in claims.values())
+    if not all(isinstance(value, str) for value in claims.values()):
+        raise ValueError("all token claims must be strings")
 
     return TokenClaims(
         claims=claims,

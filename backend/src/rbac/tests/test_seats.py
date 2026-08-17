@@ -583,3 +583,32 @@ def test_seat_result_is_frozen():
 
     with pytest.raises(AttributeError):
         result.ok = False
+
+
+
+
+def test_email_case_variants_are_treated_as_same_member():
+    state = make_state(5)
+
+    first = invite(
+        state,
+        "Bob@X.com",
+    )
+
+    second = invite(
+        first.state,
+        "bob@x.com",
+    )
+
+    assert first.ok is True
+    assert first.state.seats_used == 1
+    assert first.state.members == {
+        "bob@x.com": "pending",
+    }
+
+    assert second.ok is False
+    assert second.reason == "already_member"
+    assert second.state.seats_used == 1
+    assert second.state.members == {
+        "bob@x.com": "pending",
+    }

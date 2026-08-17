@@ -5,7 +5,7 @@ import hashlib
 import hmac
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 
@@ -86,7 +86,7 @@ def open_cache(
     Verify and open an offline licence cache.
 
     Fails closed for malformed input, invalid signatures, future-issued
-    caches, and invalid timestamps.
+    caches, stale caches, and invalid timestamps.
 
     Rollback limitation:
     a previously valid sealed cache can still be copied back by a user
@@ -182,6 +182,18 @@ def open_cache(
             payload=None,
             ok=False,
             reason="cache_from_future",
+        )
+
+    # Do not accept indefinitely old signed caches.
+    # A valid signature proves integrity, but does not prove that
+    # the cached licence state is still current.
+    max_cache_age = timedelta(days=30)
+
+    if current_time - issued_at > max_cache_age:
+        return CacheOpenResult(
+            payload=None,
+            ok=False,
+            reason="cache_too_old",
         )
 
     return CacheOpenResult(

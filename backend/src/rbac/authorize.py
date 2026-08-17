@@ -133,6 +133,7 @@ def authorize_launch(
         jwks,
         issuer=issuer,
         audience=audience,
+        now=operation_now,
     )
 
     if not verified.valid:

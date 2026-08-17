@@ -489,6 +489,11 @@ def test_zero_seat_organization_cannot_invite():
             seats_used=1,
             members={"alice@example.com": "unknown"},
         ),
+        SeatState(
+            seats_total=5,
+            seats_used=1,
+            members={"Alice@example.com": "active"},
+        ),
     ],
 )
 def test_corrupted_state_is_rejected(state):

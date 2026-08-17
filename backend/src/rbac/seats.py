@@ -103,6 +103,9 @@ def _validate_state(state: SeatState) -> None:
         if not isinstance(email, str) or not email.strip():
             raise ValueError("member emails must be non-empty strings")
 
+        if email != email.strip().lower():
+            raise ValueError("member email keys must be canonical")
+
         if status not in _VALID_MEMBER_STATUSES:
             raise ValueError(
                 f"invalid member status for {email!r}: {status!r}"

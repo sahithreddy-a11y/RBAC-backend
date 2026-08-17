@@ -504,3 +504,152 @@ themselves evidence that every acceptance criterion is complete.
 
 If I find an incomplete or unverified requirement, I will report it explicitly
 instead of silently treating the task as complete.
+
+
+
+# RBAC Permission Engine — Notes
+
+## 1. Decisions
+
+### Task 17 — HTTP API
+
+I separated authentication failures from authorization failures at the HTTP boundary. Missing or malformed bearer tokens and invalid or expired tokens return `401 Unauthorized`, while a valid authenticated token that is denied because of licence or module restrictions returns `403 Forbidden`. Malformed request bodies return `422 Unprocessable Entity`, and required infrastructure failures such as JWKS or licence-provider failures return `503 Service Unavailable`.
+
+I reused the existing authorization pipeline rather than duplicating JWT verification, claims parsing, licence evaluation, or module resolution inside the API layer.
+
+For authentication failures, I return a deliberately generic `unauthorized` response. For authorization failures, I return `forbidden`. For infrastructure failures, I return `service unavailable`.
+
+I deliberately do not expose detailed JWT verification reasons, whether a token specifically expired, internal licence or module reason codes, provider/cache exception details, stack traces, or internal exception messages.
+
+### Task 18 — Code Review
+
+I skipped Task 18 because it requires lead clarification before I finalize the review decisions. I did not invent defect rankings or merge decisions for work that was not completed.
+
+### Task 19 — Migration
+
+I treated a missing, empty, or invalid `project_id` as an unassigned record during the migration window.
+
+Unassigned records remain visible by default through `include_unassigned=True`, so users do not silently lose records while the migration is still in progress. Strict project scoping can exclude these records by using `include_unassigned=False`.
+
+An existing valid `project_id` is preserved during migration. Only a missing or invalid project assignment receives the supplied `default_project_id`.
+
+The migration returns new dictionaries instead of mutating the input records, and `migrate_record()` is idempotent so that rerunning the migration does not overwrite an existing valid project assignment.
+
+### Optional — SeatStore Benchmark
+
+I benchmarked the existing `SeatStore` using 10,000 operations with a realistic mixture of successful commits, version conflicts, and request replays.
+
+The workload contained 7,000 successful commits, 2,000 version conflicts, and 1,000 replays.
+
+The benchmark completed in 9.363447 seconds with a throughput of 1,067.98 operations per second.
+
+Successful commits accounted for 9,337.721 ms, or 99.95% of the measured time. Version conflicts accounted for 3.179 ms, or 0.03%, and replays accounted for 1.784 ms, or 0.02%.
+
+I did not change the implementation based only on these results. At 100 times the workload, I would first measure CPU usage, memory usage, allocation and copying overhead, p50/p95/p99 latency, garbage collection, dictionary update costs, and how performance changes as the number of stored members grows. I would optimize only after identifying the actual bottleneck.
+
+---
+
+### Task 20 — Self-review
+
+I completed the mandatory self-review by documenting the defects identified during the implementation, including where each defect occurred, what could break because of it, its severity, and whether it was fixed.
+
+I also documented the area where I had the least confidence and the reasoning behind the fixes. This helped verify that the implementation was reviewed critically rather than only checking whether the tests passed.
+
+## 2. Incomplete Work
+
+Task 18 — Code Review was skipped pending lead clarification.
+
+No defect ranking, first-fix decision, or merge recommendation is claimed for Task 18.
+
+The completed work for Task 17, Task 19, and the optional SeatStore benchmark was implemented and tested.
+
+---
+
+## 3. Approximate Time
+
+* Task 17 — HTTP API: 1h 45min
+* Task 18 — Code review: skipped pending lead clarification
+* Task 19 — Migration: 1h 45min
+* Task 20 — self_review: 30min
+* Optional SeatStore benchmark: 45min
+* Testing, debugging, and review: performed as part of the implementation work ~ 1h 30min
+
+---
+
+## 4. Tools Used
+
+* Python
+* FastAPI
+* Pydantic
+* PyJWT
+* pytest
+* FastAPI TestClient/httpx
+* Git
+* PowerShell
+* Visual Studio Code
+* AI assistant (ChatGPT) for implementation guidance, test design, debugging, and explanation
+
+---
+
+## 5. Reasoning Questions
+
+### 1. In Task 17, why is 403 wrong for an expired token, and 401 wrong for a licence denial?
+
+An expired token is an authentication failure, so it should return `401 Unauthorized`. The client needs to understand that its authentication credential is no longer valid and may need to obtain a new token or authenticate again.
+
+If an expired token returned `403 Forbidden`, the client could interpret the response as meaning that the user is authenticated but does not have permission. The client could therefore avoid taking the authentication action that is actually required.
+
+A licence denial is different because the token has already been successfully authenticated. The identity is known, but that identity is not authorized for the requested functionality, so the correct response is `403 Forbidden`.
+
+If a licence denial returned `401 Unauthorized`, the client could incorrectly treat a valid token as invalid and repeatedly attempt authentication or token refresh even though replacing the token would not solve the licence restriction.
+
+### 2. In Task 17, what did you decide to put in an error response body, and what did you deliberately leave out? What could an attacker learn from the version you shipped?
+
+I chose deliberately generic error response bodies:
+
+* `401` — `unauthorized`
+* `403` — `forbidden`
+* `503` — `service unavailable`
+
+I deliberately left out detailed JWT verification failures, whether a token specifically expired, internal licence and module reason codes, JWKS/provider/cache exception details, stack traces, internal exception messages, and token contents.
+
+The client therefore receives the HTTP-level category it needs without receiving unnecessary internal implementation details.
+
+An attacker can determine the broad category of the failure, such as authentication failure or authorization denial, but cannot use the response body to discover detailed verification reasons or internal licence/module decisions.
+
+### 3. In Task 18, of the defects you found, which would you fix first, and why that one rather than the one you ranked most severe?
+
+Task 18 was skipped pending lead clarification.
+
+I therefore did not perform the requested defect review and did not identify or rank defects. I am not inventing a first-fix decision for a review that was not completed.
+
+### 4. In Task 19, what does a missing project_id mean in your implementation, and what does a user see during the migration window?
+
+A missing, empty, or invalid `project_id` means that the record is treated as unassigned.
+
+During the migration window, unassigned records remain visible by default because `read_scoped()` uses `include_unassigned=True`.
+
+This prevents users from silently losing access to records simply because those records have not yet received a project assignment.
+
+If strict project scoping is requested with `include_unassigned=False`, unassigned records are excluded.
+
+Records that already contain a valid `project_id` are returned only when that project ID matches the requested project.
+
+### 5. In Task 19, describe the concrete sequence where a non-idempotent migrate_record destroys data. Be specific about which records and what they end up holding.
+
+The implemented `migrate_record()` is idempotent and preserves an existing valid `project_id`.
+
+If it were non-idempotent and blindly overwrote `project_id` on every migration run, consider these two records:
+
+```text
+Record 1:
+sample_id = s-1
+org_id = org-1
+project_id = project-alpha
+schema_version = 2
+
+Record 2:
+sample_id = s-2
+org_id = org-1
+project_id = project-beta
+schema_version = 2

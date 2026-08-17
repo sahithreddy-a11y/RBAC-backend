@@ -118,3 +118,86 @@ treated the offline cache as an integrity mechanism rather than claiming it solv
 local licence enforcement completely. I am also least confident about legacy
 interfaces from the previous day's modules where malformed inputs may still raise
 exceptions instead of consistently failing closed.
+
+
+## Day 4
+
+### Defect 1 — HTTP authorization boundary is more complex than the underlying authorization logic
+
+#### Where
+
+`backend/src/rbac/api.py` — authorization endpoint and dependency/error handling.
+
+#### What breaks
+
+The underlying authorization functions return structured authorization decisions, but once exposed through HTTP there are additional failure paths: malformed headers, invalid tokens, unavailable JWKS state, invalid request bodies, and licence denials.
+
+A future change to the endpoint can accidentally map these cases to the wrong HTTP status or expose internal failure information.
+
+#### How bad
+
+High severity. The API is now an untrusted network boundary. A wrong status code can cause clients to retry or refresh credentials incorrectly, while an overly detailed response can reveal internal authorization information.
+
+#### Fixed or not
+
+The current implementation has explicit tests for the important 401, 403, 422, 503, and response-redaction cases. However, this remains an area that needs regression tests whenever the endpoint or authorization dependency changes.
+
+---
+
+### Defect 2 — Migration correctness depends on preserving the idempotent state transition
+
+#### Where
+
+`backend/src/rbac/migration.py` — `migrate_record()` and `migrate_batch()`.
+
+#### What breaks
+
+Migration is safe only when an already-migrated record is treated as immutable with respect to its existing `project_id`.
+
+For example:
+
+```text
+First migration:
+record = {"sample_id": "s-1", "project_id": "project-a"}
+
+Second migration with default_project_id="__unassigned__":
+the existing project_id must remain "project-a"
+```
+
+If the migration logic were changed to blindly assign the default project on every invocation, a second run after a partial migration could silently move already-migrated records to the default project.
+
+#### How bad
+
+High severity. This is a data-integrity problem. A migration can appear successful while silently changing the ownership/scope of existing records.
+
+#### Fixed or not
+
+The current implementation and tests enforce the no-op behaviour for already-migrated records and verify that running the batch again produces the same result. The property should remain protected by regression tests because this is the most important invariant in a re-runnable migration.
+
+---
+
+### Least Confident About
+
+I am least confident about the behaviour of the complete system during the transition between the old and new data shapes. The migration functions themselves are pure and tested, but a real production migration also depends on how callers interpret records that do not yet contain `project_id`. The code needs a clear operational decision about whether those records are treated as unassigned or temporarily visible during the migration window. The implementation documents and tests a decision, but this is the area I would validate with the system owner before production use.
+
+I am also conscious that Task 17 introduced a public HTTP boundary around logic that was previously pure Python. The unit tests give good confidence in the explicitly tested status-code and error-response cases, but integration behaviour under the actual deployment stack would deserve additional verification.
+
+---
+
+### Second Pair of Eyes Before Production
+
+Of today's three tasks, I would want a second pair of eyes on **Task 17 — the HTTP authorization API**.
+
+Task 18 is already specifically a code-review exercise, and Task 19 has strong tests around idempotency, malformed records, partial migration, and scoped reads. Task 17 is the one I would review again before production because it is the point where trusted internal authorization logic becomes reachable through an untrusted network boundary.
+
+In particular, I would have another engineer verify:
+
+* authentication failures remain `401`;
+* valid authentication with a denied licence remains `403`;
+* unavailable JWKS state remains `503`;
+* malformed request data remains `422`;
+* error responses do not expose internal reasons, provider details, or tokens;
+* the health endpoint remains independent of authorization dependencies.
+
+That second review would provide confidence that the security properties of the underlying authorization functions have not been weakened by the HTTP layer.
+

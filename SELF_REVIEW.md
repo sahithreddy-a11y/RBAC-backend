@@ -201,3 +201,246 @@ In particular, I would have another engineer verify:
 
 That second review would provide confidence that the security properties of the underlying authorization functions have not been weakened by the HTTP layer.
 
+
+
+
+## Day 5 — Self Review
+
+### Task Reviewed
+
+Optional Sample Migration / Project Scoping Migration
+
+---
+
+### Defect 1 — Existing project ownership could be overwritten
+
+#### Where
+
+`backend/src/rbac/sample_migration.py`
+
+#### What breaks
+
+A migration must not replace an existing valid `project_id` with the
+migration's default project.
+
+For example, if a sample already belongs to `project-a`, running the
+migration with `default_project_id="__unassigned__"` must not move that
+sample to `__unassigned__`.
+
+#### Severity
+
+High.
+
+Incorrect project assignment can result in samples appearing under the wrong
+project and can create a data-isolation problem.
+
+#### Fixed or not
+
+Fixed.
+
+The migration preserves an existing valid `project_id` and only assigns the
+default project when the project assignment is missing or invalid.
+
+Regression tests verify that repeated migration runs do not reassign existing
+project ownership.
+
+---
+
+### Defect 2 — One malformed row could stop the complete migration
+
+#### Where
+
+`backend/src/rbac/sample_migration.py`
+
+#### What breaks
+
+A malformed record in a large migration batch should not prevent all other
+valid records from being migrated.
+
+#### Severity
+
+High for large production datasets.
+
+A single invalid record could otherwise stop the migration and leave many valid
+records partially migrated.
+
+#### Fixed or not
+
+Fixed.
+
+`migrate_rows()` isolates failures at the individual-row level, records the
+failure, and continues processing the remaining rows.
+
+The migration result reports migrated, skipped, and failed records together
+with row-specific error information.
+
+---
+
+### Defect 3 — Migration must be resumable and idempotent
+
+#### Where
+
+`backend/src/rbac/sample_migration.py`
+
+#### What breaks
+
+An interrupted migration may be executed again.
+
+Already-migrated records must not be changed, while partially migrated records
+must remain eligible for the next migration pass.
+
+#### Severity
+
+High.
+
+A non-idempotent migration could repeatedly modify data or overwrite project
+assignments during retries.
+
+#### Fixed or not
+
+Fixed.
+
+The migration checks both `project_id` and `schema_version` before deciding
+whether a row needs migration.
+
+Already-current rows are skipped, while partially migrated rows can be
+processed again.
+
+Tests verify repeated execution and partial migration recovery.
+
+---
+
+### Defect 4 — Future schema versions must not be silently downgraded
+
+#### Where
+
+`backend/src/rbac/sample_migration.py`
+
+#### What breaks
+
+A row containing a schema version newer than the version understood by the
+current migration must not be rewritten using older migration logic.
+
+#### Severity
+
+High.
+
+Silently processing a future schema could cause data corruption or loss of
+fields introduced by a newer application version.
+
+#### Fixed or not
+
+Fixed.
+
+Rows with a schema version newer than the supported `SCHEMA_VERSION` are
+rejected rather than silently downgraded.
+
+---
+
+### Defect 5 — Migration must not mutate caller-owned input data
+
+#### Where
+
+`backend/src/rbac/sample_migration.py`
+
+#### What breaks
+
+Mutating input rows directly could cause unexpected side effects for callers,
+retry logic, logging, or other processing stages using the same objects.
+
+#### Severity
+
+Medium.
+
+Unexpected mutation can make migration behavior difficult to reason about and
+can introduce subtle retry bugs.
+
+#### Fixed or not
+
+Fixed.
+
+The migration returns copied dictionaries and leaves the original input rows
+unchanged.
+
+Tests explicitly verify that the input collection and its dictionaries are not
+mutated.
+
+---
+
+### Defect 6 — Unassigned samples need explicit migration-window behavior
+
+#### Where
+
+`backend/src/rbac/sample_migration.py`
+
+#### What breaks
+
+During migration, some samples may not yet have a valid `project_id`.
+
+If these samples are immediately hidden, users may interpret the incomplete
+migration as data loss. If they are incorrectly assigned to another project,
+data isolation can be violated.
+
+#### Severity
+
+High.
+
+Incorrect scoping can cause either apparent data loss or cross-project data
+exposure.
+
+#### Fixed or not
+
+Addressed.
+
+Missing or invalid project assignments are treated as `UNASSIGNED`.
+
+`scoped_sample_filter()` supports migration-window visibility of unassigned
+samples while also allowing strict project-only filtering when
+`include_unassigned=False`.
+
+---
+
+### Least Confident About
+
+I am least confident about the production database integration and concurrency
+boundary of the migration.
+
+The migration functions operate on the snapshot of rows supplied to them.
+They cannot automatically account for rows inserted after that snapshot was
+obtained.
+
+The implementation therefore does not claim that newly inserted rows are
+automatically migrated. A subsequent migration pass is required.
+
+Before production use, the persistence-layer implementation should be reviewed
+for:
+
+- concurrent inserts;
+- concurrent updates;
+- transaction boundaries;
+- retry behavior;
+- atomic writes;
+- migration completion detection;
+- handling of rows that change while migration is running.
+
+The migration logic itself has strong unit-test coverage, but these
+database-level behaviors depend on the actual production persistence layer.
+
+---
+
+### Second Pair of Eyes Before Production
+
+I would want another engineer to review the migration before production,
+especially:
+
+- preservation of existing `project_id`;
+- idempotent and resumable behavior;
+- malformed-row handling;
+- future schema-version handling;
+- unassigned-row visibility;
+- concurrent inserts and updates;
+- database transaction and atomicity behavior.
+
+The current tests provide strong coverage of the migration logic and edge
+cases, but production database behavior should receive a separate review.
+

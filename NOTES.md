@@ -653,3 +653,154 @@ sample_id = s-2
 org_id = org-1
 project_id = project-beta
 schema_version = 2
+
+
+
+
+---
+
+# RBAC Backend — Day 5 Notes
+
+## 1. Decisions
+
+### Task 21 — Code Review
+
+Task 21 is currently pending because the required `day4_review_target.py` review target has not yet been provided.
+
+I did not invent defects, severity rankings, merge decisions, or answers to the Task 21 reasoning questions without reviewing the actual code. Once the review target is provided, I will review it as a merge decision and document each defect with:
+
+- Where — function and line
+- What breaks — concrete input and wrong result
+- Severity — critical, high, medium, or low
+- Why it happens — underlying cause
+- The fix
+- Merge or don't merge decision
+- The three highest-priority fixes, if applicable
+
+### Task 22 — Real Sample Migration
+
+I adapted the migration logic to the real sample-row shape.
+
+The real schema uses:
+
+- `id` as the integer primary key
+- `user_id` as a nullable integer foreign key
+- `sample_id` as the unique sample identifier
+- `project_id` as the newly introduced field
+- `schema_version` to identify the migrated shape
+
+I chose `id` as the row identity for validation because it is the database primary key, while `sample_id` remains the domain-level sample identifier and is required to be present and valid.
+
+A nullable `user_id` is treated as valid and migratable. `user_id = None` does not mean that the sample itself is invalid; it represents a real production row whose ownership is currently unknown or unassigned. The migration preserves `user_id` rather than attempting to invent an owner.
+
+For an unmigrated row, the migration adds `project_id` using the supplied `default_project_id` and sets `schema_version` to the supported schema version.
+
+For an already-migrated row, the existing valid `project_id` is preserved. A second migration run must never replace an existing project assignment with the default project.
+
+The migration returns new row dictionaries and does not mutate the input records.
+
+Malformed rows are isolated. A bad row is counted in `failed`, its error is recorded with its row index, and processing continues with the remaining rows.
+
+### Task 23 — Launcher Entitlements
+
+Task 23 has not been completed yet, so I am not claiming that its acceptance criteria are satisfied.
+
+The required implementation must handle both comma-separated string claims and real arrays, fail closed for malformed claims, keep expired-licence tiles visible but locked, and correctly apply the `cross_compare` requirement.
+
+---
+
+## 2. Incomplete Work
+
+### Task 21 — Code Review
+
+Pending the `day4_review_target.py` file from the lead.
+
+The review cannot be completed responsibly without the actual review target.
+
+### Task 23 — Launcher Entitlements
+
+Not completed yet.
+
+The JavaScript implementation and `node --test` acceptance tests remain to be completed.
+
+### Task 22
+
+Completed and tested.
+
+The migration implementation preserves the Day 4 properties:
+
+- idempotency
+- non-mutating behaviour
+- partial-failure tolerance
+- resume safety
+- correct handling of malformed rows
+- correct handling of `user_id = None`
+- correct scoped reads during mixed migrated/unmigrated states
+- handling of rows inserted after the original migration snapshot
+
+---
+
+## 3. Approximate Time
+
+- Task 21 — Code review: pending required review file
+- Task 22 — Real sample migration: approximately 2 hours
+- Task 23 — Launcher entitlements: approximately 1 hour 30 min
+- Self-review and documentation: approximately 30 minutes
+- Testing, debugging, and edge-case review: included in the implementation time
+
+These are approximate working-time estimates rather than exact stopwatch measurements.
+
+---
+
+## 4. Tools Used
+
+- Python
+- pytest
+- Git
+- PowerShell
+- Visual Studio Code
+- AI assistant (ChatGPT) for implementation guidance, test design, debugging, and review
+- GitHub for repository/version-control workflow
+
+For Task 22, the implementation was validated with the migration-specific pytest suite, including edge cases around malformed rows, nullable `user_id`, idempotency, partial migration, batch processing, concurrent insertion semantics, and scoped reads.
+
+---
+
+## 5. Reasoning Questions
+
+### 1. In Task 21, of the defects you found, which would you fix first, and why that one rather than the one you ranked most severe?
+
+Task 21 is pending because the required review target has not yet been provided.
+
+I therefore have not invented a defect ranking or first-fix decision. Once the target is available, I will distinguish between the defect with the highest theoretical severity and the defect I would fix first based on exploitability, likelihood, blast radius, and whether fixing it also reduces the risk of related failures.
+
+### 2. In Task 21, did any two defects combine into something worse than either alone?
+
+Task 21 is pending because the review target has not yet been provided.
+
+I will specifically check for interacting defects rather than reviewing each defect in isolation. In particular, I will examine authentication and authorization boundaries, exception handling, cached decisions, secret comparisons, caller-visible responses, logging, and state transitions.
+
+I will document the combined attacker or user experience only after verifying it against the actual review target.
+
+### 3. In Task 22, what did you decide a `user_id IS NULL` row means, and what does a user see during the migration window?
+
+I decided that `user_id = None` is a valid production row and is therefore migratable.
+
+The migration does not reject or invent a user for such a record. The existing `user_id` value remains `None`, while the migration assigns the project information required by the new schema.
+
+During the migration window, migrated and unmigrated rows can coexist. The scoped read path treats rows without a usable project assignment as unassigned. By default, unassigned rows remain visible so that users do not interpret the migration window as data loss.
+
+When `include_unassigned=False` is requested, unassigned rows are excluded from the scoped result.
+
+This provides a deliberate distinction between strict project scoping and the temporary visibility needed while the backfill is incomplete.
+
+### 4. In Task 22, describe what happens to a sample row inserted while the backfill is running. Be specific about which rows end up in which state.
+
+The migration operates on the rows supplied in its input snapshot. It cannot migrate a row that was inserted after that snapshot was obtained.
+
+For example:
+
+```text
+Initial snapshot:
+s-1
+s-2

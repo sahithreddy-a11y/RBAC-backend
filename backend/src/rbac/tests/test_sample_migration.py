@@ -7,7 +7,10 @@ import pytest
 from rbac.sample_migration import (
     SCHEMA_VERSION,
     UNASSIGNED,
+    DryRunItem,
+    DryRunResult,
     MigrationResult,
+    dry_run_migrate_rows,
     migrate_row,
     migrate_rows,
     needs_migration,
@@ -1201,4 +1204,421 @@ def test_scoped_sample_filter_rejects_non_boolean_include_unassigned():
             [],
             project_id="project-a",
             include_unassigned=1,
+        )
+
+
+# ---------------------------------------------------------------------------
+# dry_run_migrate_rows
+# ---------------------------------------------------------------------------
+
+
+def test_dry_run_reports_migratable_row_without_mutating_input():
+    rows = [
+        make_row("s-1"),
+    ]
+
+    original = copy.deepcopy(rows)
+
+    report = dry_run_migrate_rows(
+        rows,
+        default_project_id="project-1",
+    )
+
+    assert rows == original
+
+    assert report.migrated == 1
+    assert report.skipped == 0
+    assert report.failed == 0
+
+    assert len(report.items) == 1
+
+    item = report.items[0]
+
+    assert isinstance(item, DryRunItem)
+    assert item.index == 0
+    assert item.action == "migrate"
+    assert item.error is None
+
+    assert item.changes["project_id"] == {
+        "before": None,
+        "after": "project-1",
+    }
+
+    assert item.changes["schema_version"] == {
+        "before": None,
+        "after": SCHEMA_VERSION,
+    }
+
+
+def test_dry_run_reports_current_row_as_skip():
+    row = make_row(
+        "s-1",
+        project_id="project-existing",
+        schema_version=SCHEMA_VERSION,
+    )
+
+    report = dry_run_migrate_rows(
+        [row],
+        default_project_id="different-project",
+    )
+
+    assert report == DryRunResult(
+        items=[
+            DryRunItem(
+                index=0,
+                action="skip",
+                changes={},
+                before=row,
+                after=row,
+                error=None,
+            )
+        ],
+        migrated=0,
+        skipped=1,
+        failed=0,
+        errors=[],
+    )
+
+
+def test_dry_run_reports_partial_migration_changes():
+    row = make_row(
+        "s-1",
+        project_id="project-existing",
+        schema_version=1,
+    )
+
+    report = dry_run_migrate_rows(
+        [row],
+        default_project_id="project-default",
+    )
+
+    assert report.migrated == 1
+    assert report.skipped == 0
+    assert report.failed == 0
+
+    item = report.items[0]
+
+    assert item.action == "migrate"
+
+    assert item.changes == {
+        "schema_version": {
+            "before": 1,
+            "after": SCHEMA_VERSION,
+        }
+    }
+
+    assert item.after["project_id"] == "project-existing"
+
+
+def test_dry_run_reports_failed_row_without_stopping():
+    rows = [
+        make_row("s-1"),
+        None,
+        make_row("s-3"),
+    ]
+
+    original = copy.deepcopy(rows)
+
+    report = dry_run_migrate_rows(
+        rows,
+        default_project_id="project-1",
+    )
+
+    assert rows == original
+
+    assert report.migrated == 2
+    assert report.skipped == 0
+    assert report.failed == 1
+
+    assert len(report.items) == 3
+
+    assert report.items[0].action == "migrate"
+    assert report.items[1].action == "fail"
+    assert report.items[2].action == "migrate"
+
+    assert report.items[1].index == 1
+    assert report.items[1].error is not None
+    assert "row[1]" in report.items[1].error
+
+
+def test_dry_run_reports_future_schema_as_failure():
+    row = make_row(
+        "s-1",
+        project_id="project-1",
+        schema_version=SCHEMA_VERSION + 1,
+    )
+
+    report = dry_run_migrate_rows(
+        [row],
+        default_project_id="project-default",
+    )
+
+    assert report.migrated == 0
+    assert report.skipped == 0
+    assert report.failed == 1
+
+    item = report.items[0]
+
+    assert item.action == "fail"
+    assert item.index == 0
+    assert item.error is not None
+    assert "newer than the supported schema" in item.error
+
+
+def test_dry_run_handles_empty_input():
+    report = dry_run_migrate_rows(
+        [],
+        default_project_id=UNASSIGNED,
+    )
+
+    assert report == DryRunResult(
+        items=[],
+        migrated=0,
+        skipped=0,
+        failed=0,
+        errors=[],
+    )
+
+
+def test_dry_run_preserves_user_id_none():
+    row = make_row(
+        "s-1",
+        user_id=None,
+    )
+
+    report = dry_run_migrate_rows(
+        [row],
+        default_project_id=UNASSIGNED,
+    )
+
+    item = report.items[0]
+
+    assert item.action == "migrate"
+    assert item.after["user_id"] is None
+    assert item.after["project_id"] == UNASSIGNED
+    assert item.after["schema_version"] == SCHEMA_VERSION
+
+
+def test_dry_run_preserves_existing_project_assignment():
+    row = make_row(
+        "s-1",
+        project_id="project-real",
+        schema_version=1,
+    )
+
+    report = dry_run_migrate_rows(
+        [row],
+        default_project_id="project-default",
+    )
+
+    item = report.items[0]
+
+    assert item.action == "migrate"
+
+    assert item.after["project_id"] == "project-real"
+
+    assert item.changes == {
+        "schema_version": {
+            "before": 1,
+            "after": SCHEMA_VERSION,
+        }
+    }
+
+
+def test_dry_run_does_not_mutate_nested_values():
+    rows = [
+        make_row(
+            "s-1",
+            metadata={
+                "nested": {
+                    "values": [1, 2, 3],
+                }
+            },
+        )
+    ]
+
+    original = copy.deepcopy(rows)
+
+    report = dry_run_migrate_rows(
+        rows,
+        default_project_id="project-1",
+    )
+
+    assert rows == original
+
+    report.items[0].before["metadata"]["nested"]["values"].append(999)
+    report.items[0].after["metadata"]["nested"]["values"].append(888)
+
+    assert rows == original
+
+
+def test_dry_run_matches_real_migration_decision():
+    rows = [
+        make_row("s-1"),
+        make_row(
+            "s-2",
+            project_id="project-existing",
+            schema_version=SCHEMA_VERSION,
+        ),
+        make_row(
+            "s-3",
+            project_id="project-existing",
+            schema_version=1,
+        ),
+    ]
+
+    dry_report = dry_run_migrate_rows(
+        rows,
+        default_project_id="project-default",
+    )
+
+    real_rows, real_stats = migrate_rows(
+        rows,
+        default_project_id="project-default",
+    )
+
+    assert dry_report.migrated == real_stats.migrated
+    assert dry_report.skipped == real_stats.skipped
+    assert dry_report.failed == real_stats.failed
+    assert dry_report.errors == real_stats.errors
+
+    for item, real_row in zip(
+        dry_report.items,
+        real_rows,
+    ):
+        assert item.after == real_row
+
+
+def test_dry_run_batch_size_does_not_change_report():
+    rows = [
+        make_row(f"s-{index}")
+        for index in range(25)
+    ]
+
+    report_one = dry_run_migrate_rows(
+        rows,
+        default_project_id="project-1",
+        batch_size=1,
+    )
+
+    report_many = dry_run_migrate_rows(
+        rows,
+        default_project_id="project-1",
+        batch_size=500,
+    )
+
+    assert report_one == report_many
+
+
+def test_dry_run_is_repeatable():
+    rows = [
+        make_row("s-1"),
+        make_row(
+            "s-2",
+            project_id="project-2",
+            schema_version=SCHEMA_VERSION,
+        ),
+        None,
+    ]
+
+    first = dry_run_migrate_rows(
+        rows,
+        default_project_id="project-1",
+    )
+
+    second = dry_run_migrate_rows(
+        rows,
+        default_project_id="project-1",
+    )
+
+    assert first == second
+
+
+def test_dry_run_returns_one_item_per_input_row():
+    rows = [
+        make_row("s-1"),
+        None,
+        make_row(
+            "s-3",
+            project_id="project-3",
+            schema_version=SCHEMA_VERSION,
+        ),
+        {"id": 99},
+        make_row("s-5"),
+    ]
+
+    report = dry_run_migrate_rows(
+        rows,
+        default_project_id="project-1",
+        batch_size=2,
+    )
+
+    assert len(report.items) == len(rows)
+
+    assert [item.index for item in report.items] == [
+        0,
+        1,
+        2,
+        3,
+        4,
+    ]
+
+    assert [
+        item.action
+        for item in report.items
+    ] == [
+        "migrate",
+        "fail",
+        "skip",
+        "fail",
+        "migrate",
+    ]
+
+
+def test_dry_run_rejects_invalid_arguments():
+    with pytest.raises(
+        TypeError,
+        match="rows must be a list",
+    ):
+        dry_run_migrate_rows(
+            (),
+            default_project_id=UNASSIGNED,
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="default_project_id must not be empty",
+    ):
+        dry_run_migrate_rows(
+            [],
+            default_project_id="   ",
+        )
+
+    with pytest.raises(
+        TypeError,
+        match="default_project_id must be a string",
+    ):
+        dry_run_migrate_rows(
+            [],
+            default_project_id=None,
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="positive integer",
+    ):
+        dry_run_migrate_rows(
+            [],
+            default_project_id=UNASSIGNED,
+            batch_size=0,
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="positive integer",
+    ):
+        dry_run_migrate_rows(
+            [],
+            default_project_id=UNASSIGNED,
+            batch_size=True,
         )

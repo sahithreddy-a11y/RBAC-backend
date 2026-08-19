@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from typing import Any
 
@@ -10,6 +11,43 @@ UNASSIGNED = "__unassigned__"
 
 @dataclass(frozen=True)
 class MigrationResult:
+    migrated: int
+    skipped: int
+    failed: int
+    errors: list[str]
+
+
+@dataclass(frozen=True)
+class DryRunItem:
+    """
+    Describe what would happen to one input row.
+
+    action:
+      - "migrate": row would be changed by migration
+      - "skip": row is already current
+      - "fail": row cannot be migrated
+
+    changes contains only fields whose values would change.
+    before and after are defensive deep copies.
+    """
+
+    index: int
+    action: str
+    changes: dict[str, Any]
+    before: Any
+    after: Any
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class DryRunResult:
+    """
+    Complete report produced by dry-run migration.
+
+    A dry run never modifies the supplied input rows.
+    """
+
+    items: list[DryRunItem]
     migrated: int
     skipped: int
     failed: int
@@ -141,6 +179,7 @@ def migrate_row(
     rather than silently downgraded.
     """
     _validate_sample_row(row)
+
     _validate_project_id(
         default_project_id,
         field_name="default_project_id",
@@ -170,6 +209,37 @@ def migrate_row(
     migrated["schema_version"] = SCHEMA_VERSION
 
     return migrated
+
+
+def _calculate_changes(
+    before: dict,
+    after: dict,
+) -> dict[str, Any]:
+    """
+    Return only fields whose values differ between two rows.
+
+    Deep copies are returned so callers cannot mutate either the
+    original input or the migration result through the report.
+    """
+    changes: dict[str, Any] = {}
+
+    all_keys = set(before) | set(after)
+
+    for key in all_keys:
+        before_value = before.get(key)
+        after_value = after.get(key)
+
+        if before_value != after_value:
+            changes[key] = {
+                "before": copy.deepcopy(before_value)
+                if key in before
+                else None,
+                "after": copy.deepcopy(after_value)
+                if key in after
+                else None,
+            }
+
+    return changes
 
 
 def migrate_rows(
@@ -277,6 +347,154 @@ def migrate_rows(
                     result.append(row)
 
     return result, MigrationResult(
+        migrated=migrated_count,
+        skipped=skipped_count,
+        failed=failed_count,
+        errors=errors,
+    )
+
+
+def dry_run_migrate_rows(
+    rows: list[dict],
+    *,
+    default_project_id: str,
+    batch_size: int = 500,
+) -> DryRunResult:
+    """
+    Report what migrate_rows() would do without modifying anything.
+
+    The dry-run intentionally reuses:
+      - needs_migration()
+      - migrate_row()
+
+    Therefore the decision-making and validation rules remain identical
+    to the real migration.
+
+    Guarantees:
+      - input list is never mutated
+      - input dictionaries are never mutated
+      - nested input values are never mutated
+      - no migration is committed
+      - every input row receives exactly one report item
+      - already-current rows are reported as "skip"
+      - migratable rows are reported as "migrate"
+      - malformed/future-schema rows are reported as "fail"
+      - one bad row does not stop the report
+      - batch_size affects processing boundaries, not semantics
+      - repeated dry-runs produce equivalent reports
+      - returned report data is defensively copied
+    """
+    if not isinstance(rows, list):
+        raise TypeError("rows must be a list")
+
+    _validate_project_id(
+        default_project_id,
+        field_name="default_project_id",
+    )
+
+    if (
+        isinstance(batch_size, bool)
+        or not isinstance(batch_size, int)
+        or batch_size <= 0
+    ):
+        raise ValueError("batch_size must be a positive integer")
+
+    items: list[DryRunItem] = []
+
+    migrated_count = 0
+    skipped_count = 0
+    failed_count = 0
+    errors: list[str] = []
+
+    for batch_start in range(0, len(rows), batch_size):
+        batch = rows[
+            batch_start : batch_start + batch_size
+        ]
+
+        for offset, row in enumerate(batch):
+            index = batch_start + offset
+
+            try:
+                if needs_migration(row):
+                    proposed = migrate_row(
+                        row,
+                        default_project_id=default_project_id,
+                    )
+
+                    changes = _calculate_changes(
+                        row,
+                        proposed,
+                    )
+
+                    items.append(
+                        DryRunItem(
+                            index=index,
+                            action="migrate",
+                            changes=copy.deepcopy(changes),
+                            before=copy.deepcopy(row),
+                            after=copy.deepcopy(proposed),
+                        )
+                    )
+
+                    migrated_count += 1
+
+                else:
+                    current = copy.deepcopy(row)
+
+                    items.append(
+                        DryRunItem(
+                            index=index,
+                            action="skip",
+                            changes={},
+                            before=copy.deepcopy(row),
+                            after=current,
+                        )
+                    )
+
+                    skipped_count += 1
+
+            except (TypeError, ValueError, KeyError) as exc:
+                error = (
+                    f"row[{index}]: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+
+                errors.append(error)
+                failed_count += 1
+
+                items.append(
+                    DryRunItem(
+                        index=index,
+                        action="fail",
+                        changes={},
+                        before=copy.deepcopy(row),
+                        after=copy.deepcopy(row),
+                        error=error,
+                    )
+                )
+
+            except Exception as exc:
+                error = (
+                    f"row[{index}]: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+
+                errors.append(error)
+                failed_count += 1
+
+                items.append(
+                    DryRunItem(
+                        index=index,
+                        action="fail",
+                        changes={},
+                        before=copy.deepcopy(row),
+                        after=copy.deepcopy(row),
+                        error=error,
+                    )
+                )
+
+    return DryRunResult(
+        items=items,
         migrated=migrated_count,
         skipped=skipped_count,
         failed=failed_count,

@@ -444,3 +444,246 @@ especially:
 The current tests provide strong coverage of the migration logic and edge
 cases, but production database behavior should receive a separate review.
 
+## Day 6 — Self Review
+
+### Task Reviewed
+
+Task 25 — Code Review
+Task 26 — Production Sample Backfill
+Task 27 — Locked-Tile View Model
+
+---
+
+### Task 25 — Code Review
+
+#### Defect 1 — Authorization input can fail open or expose unintended behaviour
+
+##### Where
+
+`day4_review_target.py` — entitlement/authorization decision logic identified during the code review.
+
+##### What breaks
+
+Malformed or unexpected authorization inputs can cause the entitlement decision to behave differently from the intended fail-closed policy.
+
+The important risk is that authorization code must not assume that callers always provide valid claims or correctly shaped data.
+
+##### How bad
+
+High severity.
+
+Authorization failures can affect whether a user is allowed to access protected functionality. Unexpected input should result in a controlled denial rather than an exception or an unintended grant.
+
+##### Fixed or not
+
+Not fixed in the reviewed code.
+
+The review finding was documented in `CODE_REVIEW.md`; the task was to identify and communicate the defects rather than modify the author's implementation.
+
+---
+
+### Task 26 — Production Sample Backfill
+
+#### Defect 1 — Legacy `"Unknown"` treatment value requires explicit normalization
+
+##### Where
+
+`backend/src/rbac/sample_backfill.py` — `normalize_legacy_values()`.
+
+##### What breaks
+
+Older rows use the literal string `"Unknown"` for `treatment`, while newer rows use `NULL` for the same "not recorded" state.
+
+Keeping both representations would make filtering and downstream logic inconsistent.
+
+##### How bad
+
+Medium severity.
+
+The data would remain readable, but different representations of the same semantic state could produce inconsistent filtering, reporting, and application behaviour.
+
+##### Fixed or not
+
+Fixed.
+
+The backfill normalizes the legacy `"Unknown"` placeholder to `None`. This treats `"Unknown"` as "not recorded" rather than as a real treatment value.
+
+This is an intentional data-normalization decision rather than silently treating `"Unknown"` as a meaningful treatment.
+
+A user who previously filtered specifically for `"Unknown"` would need to use the application's "not recorded"/null representation after the backfill.
+
+---
+
+#### Defect 2 — Checkpointing cannot depend on row indexes
+
+##### Where
+
+`backend/src/rbac/sample_backfill.py` — `run_backfill()` checkpoint handling.
+
+##### What breaks
+
+A checkpoint such as "processed through index 40,000" is unsafe because rows can be inserted between runs.
+
+The same index can refer to a different row after the dataset changes, causing rows to be skipped or processed incorrectly.
+
+##### How bad
+
+High severity.
+
+A faulty resume mechanism can silently leave production rows unmigrated or process the wrong rows.
+
+##### Fixed or not
+
+Fixed.
+
+The checkpoint uses a stable row identity rather than relying only on the position of a row in the input list.
+
+A checkpoint is associated with its own backfill run, and stale or foreign checkpoint information is rejected rather than blindly trusted.
+
+---
+
+#### Defect 3 — Ownership can change while the backfill is running
+
+##### Where
+
+`backend/src/rbac/sample_backfill.py` — `run_backfill()` and migration processing.
+
+##### What breaks
+
+A startup job can assign a `user_id` to a row after the backfill has already processed that row.
+
+The migration therefore operates on the snapshot it observed; it cannot claim that the result reflects every ownership change that happened after that snapshot.
+
+##### How bad
+
+High severity for production consistency.
+
+Without a clear policy, a long-running migration could leave ownership-related state inconsistent with the latest database state.
+
+##### Fixed or not
+
+Addressed.
+
+The backfill treats each invocation as operating on the rows observed by that pass. Ownership changes occurring afterwards are not silently assumed to have been processed.
+
+A subsequent pass over the current rows is required to reconcile changes that happened between passes.
+
+This makes the concurrency boundary explicit instead of pretending that a snapshot-based migration has live database knowledge.
+
+---
+
+### Task 27 — Locked-Tile View Model
+
+#### Defect 1 — Licensed and installed are separate states
+
+##### Where
+
+`js/tile_view_model.js` — tile action selection.
+
+##### What breaks
+
+A licensed module that is already installed should launch, while a licensed module that is not installed should offer installation.
+
+Installation state must not be treated as entitlement.
+
+##### How bad
+
+High severity.
+
+Confusing installation with licensing could allow an installed but unlicensed module to become usable.
+
+##### Fixed or not
+
+Fixed.
+
+The view model checks entitlement independently from `installedSkus`.
+
+Licensed + installed produces `launch`.
+
+Licensed + not installed produces `install`.
+
+Unlicensed modules remain visible and use `contact_sales`.
+
+---
+
+#### Defect 2 — Expired licences need a different user-facing reason
+
+##### Where
+
+`js/tile_view_model.js` — entitlement reason to tooltip mapping.
+
+##### What breaks
+
+An expired licence must not be presented as though the user never owned the module.
+
+The renderer needs to distinguish an expired entitlement from a never-licensed entitlement.
+
+##### How bad
+
+Medium severity.
+
+This does not grant unauthorized access, but it gives the user incorrect information and makes the UI less useful for diagnosing licence problems.
+
+##### Fixed or not
+
+Fixed.
+
+The view model maps the expired reason to a dedicated expiry tooltip while never-licensed modules receive the appropriate unlicensed tooltip.
+
+---
+
+#### Defect 3 — `cross_compare` has a separate dependency reason
+
+##### Where
+
+`js/tile_view_model.js` — `cross_compare` reason handling.
+
+##### What breaks
+
+`cross_compare` can be owned but still unusable when fewer than two base modules are available.
+
+It must not be reported simply as "not licensed" because the user may actually have the entitlement.
+
+##### How bad
+
+Medium severity.
+
+The wrong explanation can make a valid entitlement look broken and can cause users to contact support unnecessarily.
+
+##### Fixed or not
+
+Fixed.
+
+The `requires_two_base_modules` reason has its own tooltip explaining that a second base module is required.
+
+---
+
+### Least Confident About
+
+I am least confident about the production boundaries around Task 26.
+
+The migration logic has strong coverage for validation, idempotency, partial failures, resume behaviour, legacy-value normalization, and ownership changes between passes. However, the real production database can have concurrent inserts and updates that are outside the snapshot supplied to the migration.
+
+The important operational assumption is that one backfill pass only guarantees correctness for the rows it observed. A later pass is required to reconcile rows that change or arrive after that snapshot.
+
+I would therefore want the persistence-layer transaction boundaries and the mechanism that obtains and writes the production rows reviewed before treating the migration as completely production-safe.
+
+I am also least confident about the user-facing impact of converting legacy `"Unknown"` treatment values to `NULL`. The normalization is semantically consistent with the current data model, but existing users or reports that explicitly filter for `"Unknown"` need to understand that those rows will now appear under the "not recorded" representation.
+
+---
+
+### Second Pair of Eyes Before Production
+
+I would want another engineer to review **Task 26 — the production backfill** before it runs against the live table.
+
+In particular, I would verify:
+
+* the checkpoint cannot accidentally resume the wrong run;
+* stale or foreign checkpoints are rejected safely;
+* concurrent ownership changes are handled by a subsequent pass;
+* existing project ownership is never overwritten;
+* malformed rows cannot stop the complete backfill;
+* legacy `"Unknown"` values are intentionally converted to `NULL`;
+* the database transaction and write boundaries are safe.
+
+Task 27 also deserves a quick renderer-level review to confirm that every entitlement reason produced by Task 23 has exactly one useful tooltip and that malformed claims always result in a locked tile rather than an exception.

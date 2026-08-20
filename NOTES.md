@@ -743,8 +743,8 @@ The migration implementation preserves the Day 4 properties:
 ## 3. Approximate Time
 
 - Task 21 — Code review: pending required review file
-- Task 22 — Real sample migration: approximately 2 hours
-- Task 23 — Launcher entitlements: approximately 1 hour 30 min
+- Task 22 — Real sample migration: approximately 1 hour
+- Task 23 — Launcher entitlements: approximately 1 hour
 - Self-review and documentation: approximately 30 minutes
 - Optional Task: approximately 30 minutes
 - Testing, debugging, and edge-case review: included in the implementation time

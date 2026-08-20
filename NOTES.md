@@ -717,10 +717,6 @@ Pending the `day4_review_target.py` file from the lead.
 
 The review cannot be completed responsibly without the actual review target.
 
-### Task 23 — Launcher Entitlements
-
-Not completed yet.
-
 The JavaScript implementation and `node --test` acceptance tests remain to be completed.
 
 ### Task 22
@@ -805,3 +801,66 @@ For example:
 Initial snapshot:
 s-1
 s-2
+
+---
+
+# RBAC Backend — Day 6 Notes
+
+The day 6 tasks 25, 26, 27 and 28 are done. The Day 6 optional task is only in pending. I have done the today tasks with the best of my understanding.
+
+## 3. Approximate Time
+
+* Task 25 — Code review: approximately 2 hours
+* Task 26 — Backfill against real production data: approximately 1 hour 45 min
+* Task 27 — Locked-tile view model: approximately 1 hour 45 min
+* Task 28 — Self-review and documentation: approximately 30 minutes
+* Optional Task: Not done
+* Testing, debugging, and edge-case review: included in the implementation time
+
+These are approximate working-time estimates rather than exact stopwatch measurements.
+
+## Tools Used
+
+* Python
+* pytest
+* Git
+* PowerShell
+* Visual Studio Code
+* AI assistant (ChatGPT) for implementation guidance, test design, debugging, and review
+* GitHub for repository/version-control workflow
+
+## Questions
+
+### 10. In Task 25, of the defects you found, which would you fix first, and why that one rather than the one you ranked most severe? (These can differ. If they do, say why.)
+
+I would fix the authorization-input handling defect first because it directly affects the authorization decision and can cause malformed or unexpected input to result in unintended behaviour.
+
+Although it is also the highest-severity defect I identified, the reason for prioritizing it is the direct security impact. Authorization logic should fail closed when claims or authorization inputs are malformed rather than allowing an exception or unintended grant. Fixing this first reduces the risk of unauthorized access to protected functionality.
+
+### 11. In Task 25, did any two defects combine into something worse than either alone? Describe the combination and what a user or attacker would actually experience.
+
+Yes. The authorization-input handling issue can become more serious when combined with other weaknesses in entitlement or authorization decision handling.
+
+An attacker who can provide malformed or unexpected authorization input could potentially cause the authorization decision to behave differently from the intended fail-closed policy. If another part of the authorization flow incorrectly assumes that the input has already been validated, the two issues can compound and make an unintended access decision more likely.
+
+From a user's or attacker's perspective, the result could be access being granted or authorization behaviour becoming inconsistent when the supplied claims do not have the expected structure. The important control is that malformed authorization input must result in a controlled denial rather than an exception or unintended grant.
+
+### 12. In Task 26, what did you decide treatment == "Unknown" means, and what does a user who filters on it see after the backfill?
+
+I decided that the legacy `"Unknown"` treatment value means that the treatment was not recorded, rather than representing a real treatment value.
+
+The backfill therefore converts `"Unknown"` to `None` so that it uses the same representation as newer rows where the treatment is not recorded.
+
+After the backfill, a user who previously filtered specifically for `treatment == "Unknown"` will no longer find those rows using that filter. They will need to use the application's "not recorded"/null representation instead.
+
+This was an intentional data-normalization decision to keep the meaning of missing treatment data consistent.
+
+### 13. In Task 26, what did you use as the checkpoint, and what happens if it is stale?
+
+The backfill uses a stable row identity for checkpointing rather than relying on a row's position or index in the input list.
+
+The checkpoint is associated with its own backfill run. This prevents a checkpoint from one run from being blindly reused against another run.
+
+If checkpoint information is stale or belongs to a different backfill run, it is rejected rather than blindly trusted. This prevents the backfill from resuming from an incorrect position and potentially skipping rows or processing the wrong rows.
+
+Using stable row identity also avoids the problem where rows inserted between runs change the meaning of a numeric row index.
